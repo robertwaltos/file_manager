@@ -1,0 +1,70 @@
+paths:
+  staging: data/staging
+  logs: logs
+  nsfw_review: data/nsfw_review
+  duplicates_backup: F:/__DUPLICATES_TO_DELETE
+  corrupted: F:/__CORRUPTED_FILES
+  google_drive:
+    media: Google Drive/Media
+    documents: Google Drive/Documents
+databases:
+  file_inventory: data/file_inventory.sqlite
+  hash_database: data/hash_database.sqlite
+  ai_classifications: data/ai_classifications.sqlite
+  state: data/state.sqlite
+scan:
+  roots:
+  - T:/
+  follow_symlinks: false
+  skip_hidden: true
+resource_limits:
+  max_cpu_percent: 33
+  max_ram_percent: 33
+  max_gpu_percent: 90
+  threads:
+    scanning: 4
+    hashing: 6
+    ai_processing: 2
+    file_operations: 2
+    api_calls: 2
+ai_models:
+  clip_model: ViT-L/14
+  nsfw_threshold: 0.85
+  batch_size: 32
+safety:
+  require_approval_for_deletion: true
+  backup_before_move: false
+  checkpoint_interval_seconds: 300
+  checkpoint_after_files: 500
+  require_confirmation_for_resume: true
+  require_confirmation_for_permission_retry: true
+  require_confirmation_for_duplicate_moves: true
+hashing:
+  full_hash_max_bytes: 104857600
+  hybrid_chunk_bytes: 1048576
+duplicates:
+  report_prefix: duplicate_report
+  plan_prefix: movement_plan
+  review_manifest_prefix: duplicate_review
+  backup_action: copy
+  apply_plan: false
+  delete_after_backup: true
+  delete_copy_after_backup: true
+  primary_locations:
+  - Documents
+  - Pictures
+  - Desktop
+  - Videos
+  - Music
+  google_drive_marker: G:\My Drive
+  google_drive_target: G:\My Drive\DRIVE DUPLICATES FROM OTHER FOLDERS
+exclusions:
+  system_paths:
+  - C:/Windows
+  - C:/Program Files
+  - C:/Program Files (x86)
+  file_patterns:
+  - '*.sys'
+  - '*.dll'
+  - hiberfil.sys
+  - pagefile.sys

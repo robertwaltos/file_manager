@@ -1,0 +1,512 @@
+# MISSION
+Build a production-grade, fail-safe file management system that intelligently organizes, deduplicates, and categorizes all files across local, cloud, and network storage with AI-powered content recognition and robust error handling.
+
+# CORE PRINCIPLES
+1. **Safety First**: Never delete without verification; all destructive operations require user confirmation or create backups
+2. **Resumability**: Every operation must be interruptible and resumable from the last checkpoint
+3. **Auditability**: Comprehensive logging of all actions, decisions, and file movements
+4. **Performance**: Efficient multi-threaded processing with resource constraints respected
+5. **Intelligent Processing**: Eliminate redundant work through smart task ordering
+
+# SYSTEM ARCHITECTURE
+
+## 1. ORCHESTRATOR (Central Control)
+- **Task Queue Manager**: Priority-based queue with dependency resolution
+- **State Persistence**: SQLite database for all scan states, file metadata, and operation history
+- **Resource Monitor**: Real-time CPU/RAM/GPU monitoring with automatic throttling
+- **Checkpoint System**: Auto-save every 5 minutes or after N operations
+- **Recovery System**: Detect incomplete operations on startup and resume
+- **Progress Dashboard**: Real-time CLI/web dashboard showing all active processes
+
+## 2. FILE DISCOVERY & INDEXING ENGINE
+
+### Scanning Strategy
+```
+Phase 1: Quick Metadata Scan (Size, Name, Location)
+├─ Build initial file inventory
+├─ Identify inaccessible/permission-restricted files
+└─ Queue for permission handling
+
+Phase 2: Hash-Based Analysis (Parallel)
+├─ Small files (<100MB): Full SHA-256 hash
+├─ Large files: Hybrid hash (first 1MB + middle 1MB + last 1MB + size)
+├─ Corruption detection during hashing (verify file can be opened)
+└─ Store in database with metadata
+```
+
+### Drive Coverage
+- **Local Drives**: C:, D:, E:, F:, etc.
+- **Network Drives**: SMB/NFS mapped drives
+- **Cloud Storage**: 
+  - Google Drive (via API, not local sync)
+  - Detect existing Google Drive sync folders
+- **External Drives**: USB/removable media (optional scan)
+
+### Permission Handling
+- Detect read-only/protected files
+- Attempt elevation (Windows: UAC, Linux: sudo)
+- Log permission failures with retry queue
+- Move inaccessible items to end of queue
+- Provide user prompt with retry options
+
+## 3. DUPLICATE DETECTION ENGINE
+
+### Multi-Level Detection
+```
+Level 1: Size + Filename match (fast pre-filter)
+Level 2: Partial hash match (hybrid hashing)
+Level 3: Full hash verification (only for Level 2 matches)
+Level 4: Metadata comparison (creation date, EXIF, etc.)
+```
+
+### Deduplication Strategy
+- **Keep Priority Order**:
+  1. Files on Google Drive (never move/delete)
+  2. Files with newest modification date
+  3. Files with richest metadata (EXIF, tags, etc.)
+  4. Files in "primary" locations (Documents, Pictures vs. Downloads)
+  
+- **Duplicate Handling**:
+  - Create manifest: `F:\Duplicates_Backup\duplicate_report_YYYYMMDD.json`
+  - Move duplicates to: `F:\Duplicates_Backup\[original_path_encoded]\`
+  - Maintain hardlink/symlink option for space saving
+  - User review dashboard before permanent deletion
+
+## 4. CORRUPTION DETECTION
+
+### Detection Methods
+1. **During Hashing**: Catch read errors, truncated files
+2. **File Header Validation**: Check magic numbers/signatures
+3. **Format-Specific Validation**:
+   - Images: PIL/Pillow open attempt
+   - Videos: ffprobe integrity check
+   - Documents: Format-specific parsers (docx, pdf, xlsx)
+   - Archives: 7zip/zipfile test mode
+
+### Corruption Handling
+- Move to: `F:\Corrupted_Files\[file_type]\`
+- Attempt repair (images: ImageMagick, videos: ffmpeg)
+- Log unrepairable files with error details
+- Never delete OS-critical files (maintain whitelist)
+- System folder exclusions: `C:\Windows`, `C:\Program Files`, etc.
+
+## 5. AI CATEGORIZATION ENGINE
+
+### Model Selection & Setup
+- **Image/Video Recognition**: 
+  - Primary: OpenAI CLIP (ViT-L/14 or ViT-B/32)
+  - Secondary: BLIP-2 for detailed captioning
+  - Fallback: ResNet-based classifiers
+  
+- **NSFW Detection**:
+  - Primary: NudeNet (detection + classification)
+  - Secondary: CLIP-based NSFW classifier
+  - Confidence threshold: >0.85 for quarantine
+
+- **Document Classification**:
+  - Text extraction: PyMuPDF, python-docx, openpyxl
+  - Embeddings: sentence-transformers (all-MiniLM-L6-v2)
+  - Classification: Zero-shot with CLIP or fine-tuned BERT
+  - Categories: Financial, Personal, Work, Medical, Legal, Tax, Educational, etc.
+
+### Processing Pipeline
+```
+1. Extract features (CLIP embeddings for images, text embeddings for docs)
+2. Run through classifiers
+3. Generate tags and confidence scores
+4. NSFW check (images/videos only)
+5. Store results in database
+```
+
+### NSFW Workflow
+- Scan all image/video files with NudeNet
+- Files with NSFW score >0.85 → `F:\NSFW_Review\[category]\`
+- Generate preview thumbnails (blurred)
+- Create review manifest: `F:\NSFW_Review\review_queue.html`
+- User confirmation required before final placement
+
+## 6. FILE CATEGORIZATION & ORGANIZATION
+
+### Category Definitions
+```
+Media Files:
+├─ Images: jpg, png, gif, bmp, tiff, webp, heic, raw formats
+├─ Videos: mp4, avi, mkv, mov, wmv, flv, webm
+├─ Audio: mp3, wav, flac, aac, ogg, m4a
+└─ 3D/Design: blend, obj, fbx, stl, psd, ai
+
+Documents:
+├─ Office: docx, xlsx, pptx, odt, ods, odp
+├─ PDFs: pdf
+├─ Text: txt, md, rtf, csv, json, xml
+└─ eBooks: epub, mobi, azw
+
+Code/Development:
+├─ Source: py, js, java, cpp, cs, go, rs, etc.
+├─ Config: yaml, toml, ini, conf, env
+└─ Data: sql, db, sqlite, json, xml
+
+Archives:
+├─ zip, rar, 7z, tar, gz, bz2
+
+Executables/Installers:
+├─ exe, msi, dmg, app, deb, rpm
+
+Databases:
+├─ db, sqlite, mdb, accdb, sql
+```
+
+### AI-Enhanced Categorization
+- **Images**: Content-based folders (e.g., "Landscapes", "People", "Screenshots", "Memes")
+- **Videos**: Scene detection + categorization (e.g., "Tutorials", "Movies", "Personal")
+- **Documents**: Topic clustering (e.g., "Finance/2024", "Medical/Insurance", "Work/Projects")
+
+## 7. FILE MOVEMENT STRATEGY
+
+### Destination Rules
+```
+Google Drive:
+├─ Media/ (all images, videos, audio)
+│   ├─ Photos/[Year]/[AI_Category]/
+│   ├─ Videos/[Year]/[AI_Category]/
+│   └─ Audio/[Genre or Type]/
+├─ Documents/[AI_Category]/[Year]/
+└─ Archives/[Type]/
+
+C:\ Drive (Programs & OS):
+├─ Program Files/
+├─ Program Files (x86)/
+├─ Windows/
+└─ Users/[username]/AppData/
+
+D:\ Drive (Databases & Data):
+├─ Databases/[App_Name]/
+├─ Development/[Project]/
+├─ Data/[Category]/
+└─ Backups/
+
+F:\ Drive (Staging & Logs):
+├─ Staging/[operation_id]/
+├─ Logs/[YYYY-MM-DD]/
+├─ Duplicates_Backup/
+├─ Corrupted_Files/
+└─ NSFW_Review/
+```
+
+### Movement Plan Generation
+1. Generate complete manifest: `F:\Logs\movement_plan_YYYYMMDD_HHMMSS.json`
+2. Include:
+   - Source → Destination mappings
+   - File sizes and estimated transfer times
+   - Dependency chains (move parents before children)
+   - Conflict resolution (filename collisions)
+3. Dry-run validation
+4. User approval required
+5. Execute with progress tracking
+
+### Google Drive Handling
+- **Existing GDrive Files**: Never move locally, operate via API
+- **Upload Strategy**: 
+  - Batch uploads (max 100 files per batch)
+  - Resume partial uploads
+  - Verify checksums after upload
+  - Maintain local copy until upload confirmed
+- **Duplicate Handling**: 
+  - Check GDrive for duplicates before upload
+  - Move GDrive duplicates to `Google Drive/Duplicates/` folder
+  - Corrupted GDrive files to `Google Drive/Corrupted/`
+
+## 8. PERFORMANCE & RESOURCE MANAGEMENT
+
+### Multi-Threading Strategy
+```
+Thread Pool Allocation:
+├─ File Scanning: 4 threads
+├─ Hashing: 6 threads (I/O intensive)
+├─ AI Processing: 2 threads (GPU limited)
+├─ File Operations: 2 threads (cautious, safety-first)
+└─ API Calls: 2 threads (rate-limited)
+```
+
+### Resource Constraints
+- **CPU**: Monitor usage, throttle if >33% sustained
+- **RAM**: Memory-map large files, stream processing, limit cache to 33% available RAM
+- **GPU**: Batch AI inference, queue management
+- **Disk I/O**: Prioritize SSD operations, throttle on HDDs
+- **Network**: Respect API rate limits, exponential backoff
+
+### GPU Optimization
+- Batch CLIP inference (32-64 images per batch)
+- Use CUDA/TensorRT if available
+- FP16 precision for faster inference
+- Model caching in VRAM
+
+## 9. FAIL-SAFE MECHANISMS
+
+### Checkpoint System
+```python
+{
+  "operation_id": "scan_20240124_143022",
+  "phase": "duplicate_detection",
+  "processed_files": 45230,
+  "total_files": 123000,
+  "last_file": "/path/to/file.jpg",
+  "hash_db_path": "F:/Logs/hash_database.sqlite",
+  "timestamp": "2024-01-24T14:35:12Z"
+}
+```
+
+### Recovery Procedures
+1. On startup: Check for incomplete operations
+2. Verify database integrity
+3. Resume from last checkpoint
+4. Re-validate last N operations (default: 100)
+5. Offer rollback option for file movements
+
+### Error Handling
+- **Transient Errors**: Retry 3x with exponential backoff
+- **Permission Errors**: Queue for user intervention
+- **Corruption Errors**: Log and quarantine
+- **API Errors**: Cache operations, retry later
+- **Disk Space**: Check before operations, alert if <10GB free
+
+### Logging System
+```
+F:\Logs/
+├─ master_log_YYYYMMDD.log (all operations)
+├─ error_log_YYYYMMDD.log (errors only)
+├─ performance_log_YYYYMMDD.log (timing, resources)
+├─ movement_log_YYYYMMDD.log (file operations)
+└─ databases/
+    ├─ file_inventory.sqlite
+    ├─ hash_database.sqlite
+    └─ ai_classifications.sqlite
+```
+
+## 10. WORKFLOW OPTIMIZATION
+
+### Task Ordering (Critical Path)
+```
+1. File Discovery & Indexing (parallel across drives)
+   ↓
+2. Hybrid Hashing + Corruption Detection (combined)
+   ↓
+3. Duplicate Detection (before AI to avoid redundant work)
+   ↓
+4. Backup Duplicates (safety)
+   ↓
+5. AI Categorization (only on deduplicated set)
+   ↓
+6. NSFW Scanning (parallel with categorization)
+   ↓
+7. Movement Plan Generation
+   ↓
+8. User Review & Approval
+   ↓
+9. Staged File Movement (batch operations)
+   ↓
+10. Verification & Cleanup
+```
+
+### Efficiency Optimizations
+- Skip hidden/system files early
+- Pre-filter by extension before AI processing
+- Cache AI embeddings for similar files
+- Use file size bins for parallel processing
+- Deduplicate before categorization (as noted)
+- Batch similar operations (all moves to GDrive together)
+
+## 11. REQUIRED PACKAGES & TOOLS
+
+### Core Python Packages
+```
+- pathlib, os, shutil (file operations)
+- hashlib (hashing)
+- sqlite3 (database)
+- concurrent.futures (threading)
+- psutil (resource monitoring)
+- tqdm (progress bars)
+- logging, loguru (logging)
+```
+
+### AI/ML Packages
+```
+- torch, torchvision (PyTorch)
+- transformers (Hugging Face)
+- clip (OpenAI CLIP)
+- sentence-transformers (text embeddings)
+- nudenet (NSFW detection)
+- pillow, opencv-python (image processing)
+- ffmpeg-python (video processing)
+```
+
+### File Handling
+```
+- python-magic (file type detection)
+- PyMuPDF (PDF)
+- python-docx (Word)
+- openpyxl (Excel)
+- rarfile, py7zr (archives)
+```
+
+### Cloud/API
+```
+- google-api-python-client (Google Drive)
+- google-auth-httplib2, google-auth-oauthlib
+```
+
+### System Tools
+```
+- ffmpeg, ffprobe (system install)
+- imagemagick (optional, for repair)
+- 7zip (archive validation)
+```
+
+## 12. USER INTERFACE
+
+### CLI Dashboard (Rich/Textual)
+```
+┌─ File Management System ─────────────────────────────┐
+│ Phase: Duplicate Detection                           │
+│ Progress: ████████████░░░░░░░░░░ 45,230/123,000     │
+│                                                       │
+│ Active Threads: 12/16                                │
+│ CPU: 28% | RAM: 4.2GB/12GB | GPU: 65%               │
+│                                                       │
+│ Duplicates Found: 3,421 (saving 47.3 GB)            │
+│ Corrupted: 12 | NSFW Flagged: 87                    │
+│                                                       │
+│ [P] Pause | [R] Resume | [Q] Quit & Save            │
+└───────────────────────────────────────────────────────┘
+```
+
+### Web Dashboard (Optional, Flask)
+- Real-time operation monitoring
+- NSFW review interface
+- Movement plan approval
+- Log viewer
+- Manual file categorization override
+
+## 13. CONFIGURATION FILE
+
+### config.yaml
+```yaml
+paths:
+  staging: "F:/Staging"
+  logs: "F:/Logs"
+  nsfw_review: "F:/NSFW_Review"
+  duplicates_backup: "F:/Duplicates_Backup"
+  corrupted: "F:/Corrupted_Files"
+  
+  google_drive:
+    media: "Google Drive/Media"
+    documents: "Google Drive/Documents"
+    
+resource_limits:
+  max_cpu_percent: 33
+  max_ram_percent: 33
+  max_gpu_percent: 90
+  
+  threads:
+    scanning: 4
+    hashing: 6
+    ai_processing: 2
+    file_operations: 2
+    
+ai_models:
+  clip_model: "ViT-L/14"
+  nsfw_threshold: 0.85
+  batch_size: 32
+  
+safety:
+  require_approval_for_deletion: true
+  backup_before_move: false
+  checkpoint_interval_seconds: 300
+  
+exclusions:
+  system_paths:
+    - "C:/Windows"
+    - "C:/Program Files"
+    - "C:/Program Files (x86)"
+  file_patterns:
+    - "*.sys"
+    - "*.dll"
+    - "hiberfil.sys"
+    - "pagefile.sys"
+```
+
+## 14. IMPLEMENTATION PHASES
+
+### Phase 1: Foundation (Week 1)
+- Set up project structure
+- Install all dependencies
+- Create database schemas
+- Implement orchestrator skeleton
+- Build file discovery engine
+- Basic logging system
+
+### Phase 2: Core Processing (Week 2)
+- Implement hashing engine
+- Build duplicate detection
+- Add corruption detection
+- Permission handling system
+- Checkpoint/resume functionality
+
+### Phase 3: AI Integration (Week 3)
+- Set up CLIP model
+- Implement NudeNet scanning
+- Document classification
+- Build categorization engine
+- Test AI pipelines
+
+### Phase 4: File Operations (Week 4)
+- Movement plan generator
+- Google Drive API integration
+- File transfer engine
+- Verification system
+
+### Phase 5: Polish & Testing (Week 5)
+- Build dashboards
+- Comprehensive testing
+- Performance tuning
+- Documentation
+- User acceptance testing
+
+# ADDITIONAL IMPROVEMENTS
+
+1. **Smart Caching**: Cache AI embeddings for similar files (near-duplicates)
+2. **Incremental Scans**: Only re-scan changed files on subsequent runs
+3. **Cloud Deduplication**: Check cloud storage for duplicates before upload
+4. **Format Conversion**: Optional transcode videos/images to save space
+5. **Metadata Preservation**: Maintain EXIF, creation dates, tags
+6. **Rollback System**: Undo last N operations
+7. **Report Generation**: HTML/PDF reports of operations
+8. **Email Notifications**: Alert on completion or errors
+9. **Bandwidth Throttling**: Limit network usage for cloud operations
+10. **Machine Learning Improvements**: Learn from user corrections to improve categorization
+
+# SUCCESS CRITERIA
+
+- ✅ Zero data loss (all operations logged and reversible)
+- ✅ Successfully handle 500,000+ files
+- ✅ Resource usage within constraints (33% CPU/RAM)
+- ✅ Resume from any interruption
+- ✅ >95% accuracy in duplicate detection
+- ✅ >90% accuracy in AI categorization
+- ✅ Complete audit trail for all operations
+- ✅ User approval workflow for destructive operations
+
+# AGENT INSTRUCTIONS
+
+1. Research and install ALL required packages
+2. Set up development environment with GPU support
+3. Create modular, testable code architecture
+4. Implement comprehensive error handling
+5. Build with scalability in mind (design for millions of files)
+6. Document all functions and modules
+7. Create unit tests for critical components
+8. Start with small test dataset before full deployment
+9. Provide progress updates at each phase
+10. Request user input for critical decisions
+
+Begin implementation following the phases outlined above.

@@ -1,0 +1,353 @@
+paths:
+  staging: "data/staging"
+  logs: "logs"
+  nsfw_review: "F:/NSFW_Review"
+  duplicates_backup: "F:/__DUPLICATES_TO_DELETE"
+  corrupted: "F:/__CORRUPTED_FILES"
+  google_drive:
+    media: "Google Drive/Media"
+    documents: "Google Drive/Documents"
+
+databases:
+  file_inventory: "data/file_inventory.sqlite"
+  hash_database: "data/hash_database.sqlite"
+  ai_classifications: "data/ai_classifications.sqlite"
+  state: "data/state.sqlite"
+
+scan:
+  roots:
+    - "C:/"
+    - "D:/"
+    - "F:/"
+    - "G:/"
+    - "H:/"
+    - "R:/"
+    - "S:/"
+    - "T:/"
+    - "V:/"
+    - "W:/"
+    - "X:/"
+    - "Y:/"
+    - "Z:/"
+  follow_symlinks: false
+  skip_hidden: true
+  skip_completed: true
+  incremental: true
+  invalidate_hashes_on_change: true
+  detect_removed: false
+  detect_removed_full_only: true
+
+merge:
+  progress_every: 250
+  progress_interval_seconds: 30
+
+merge_jobs:
+  enabled: true
+  jobs:
+    - name: "audio_old_to_audio"
+      source: "G:/My Drive/13_AUDIO_OLD"
+      target: "G:/My Drive/13_AUDIO"
+      inbox_root: "G:/My Drive/00_INBOX"
+      apply: true
+      delete_old: true
+      enabled: true
+
+resource_limits:
+  max_cpu_percent: 33
+  max_ram_percent: 33
+  max_gpu_percent: 90
+  threads:
+    scanning: 4
+    hashing: 6
+    ai_processing: 2
+    file_operations: 2
+    api_calls: 2
+
+dashboard:
+  enabled: true
+  interval_seconds: 30
+  web_enabled: true
+  web_host: "127.0.0.1"
+  web_port: 8765
+
+task_queue:
+  reset_on_start: true
+
+ai_models:
+  clip_model: "ViT-L/14"
+  nsfw_threshold: 0.85
+  batch_size: 32
+
+ai:
+  enabled: true
+  reprocess_existing: false
+  max_files_per_run: 0
+  text_max_chars: 4000
+  clip_model: "openai/clip-vit-base-patch32"
+  image_batch_size: 8
+  use_embeddings: true
+  embedding_model: "all-MiniLM-L6-v2"
+  classify_audio: true
+  classify_unknown: true
+  image_categories:
+    - "People"
+    - "Landscapes"
+    - "Documents"
+    - "Screenshots"
+    - "Memes"
+    - "Pets"
+    - "Food"
+    - "Travel"
+    - "Artwork"
+    - "Construction"
+    - "Remodeling"
+  document_categories:
+    Financial:
+      - "invoice"
+      - "receipt"
+      - "bank"
+      - "tax"
+      - "statement"
+      - "payment"
+    Medical:
+      - "medical"
+      - "insurance"
+      - "doctor"
+      - "prescription"
+      - "clinic"
+      - "patient"
+    Legal:
+      - "contract"
+      - "agreement"
+      - "nda"
+      - "license"
+      - "legal"
+      - "court"
+    Work:
+      - "project"
+      - "meeting"
+      - "proposal"
+      - "report"
+      - "budget"
+      - "plan"
+    Personal:
+      - "resume"
+      - "cv"
+      - "passport"
+      - "id"
+      - "certificate"
+      - "letter"
+    Education:
+      - "course"
+      - "lecture"
+      - "assignment"
+      - "homework"
+      - "syllabus"
+    Trading:
+      - "trading"
+      - "trade"
+      - "stock"
+      - "options"
+      - "futures"
+
+nsfw:
+  enabled: true
+  move_flagged: true
+  threshold: 0.85
+  report_prefix: "nsfw_report"
+  review_prefix: "nsfw_review"
+  thumbnail_max_px: 256
+  thumbnail_blur_radius: 0
+  thumbnail_subdir: "thumbnails"
+
+organization:
+  enabled: true
+  apply_plan: false
+  action: "move"
+  plan_prefix: "organization_plan"
+  review_prefix: "organization_review"
+  use_year_subdir: false
+  root: "G:/My Drive"
+  inbox_root: "00_INBOX"
+  inbox_group_min_count: 3
+  inbox_group_by: "category"
+  uncategorized_to_inbox: true
+  images_root: "08_HOME_FAMILY_PHOTOS"
+  videos_root: "97_MISCELLANEOUS_VIDEOS"
+  documents_root: "00_INBOX"
+  audio_root: "13_AUDIO"
+  other_root: "00_INBOX"
+  category_destinations:
+    Financial: "02_FINANCE"
+    Legal: "03_LEGAL_TAX"
+    Medical: "07_HOME_FAMILY_MEDICAL"
+    Personal: "04_IDENTITY"
+    Education: "17_EDUCATION"
+    Work: "16_PROJECTS"
+    Trading: "18_TRADING"
+    Screenshots: "14_SCREENSHOTS"
+    People: "08_HOME_FAMILY_PHOTOS"
+    Landscapes: "08_HOME_FAMILY_PHOTOS"
+    Pets: "08_HOME_FAMILY_PHOTOS"
+    Travel: "08_HOME_FAMILY_PHOTOS"
+    Construction: "09_CONSTRUCTION_PHOTOS"
+    Remodeling: "11_TRUEFORM_REMODELING"
+  subcategory_destinations:
+    audio: "13_AUDIO"
+    video: "97_MISCELLANEOUS_VIDEOS"
+    image: "08_HOME_FAMILY_PHOTOS"
+  extension_destinations:
+    ".epub": "15_E-BOOKS"
+    ".mobi": "15_E-BOOKS"
+    ".azw": "15_E-BOOKS"
+    ".azw3": "15_E-BOOKS"
+  path_keyword_destinations:
+    "zero_point_energy": "10_ZERO_POINT_ENERGY"
+    "trueform": "11_TRUEFORM_REMODELING"
+    "remodel": "11_TRUEFORM_REMODELING"
+    "construction": "09_CONSTRUCTION_PHOTOS"
+
+cloud:
+  google_drive:
+    enabled: true
+    apply_moves: true
+    credentials_path: ""
+    token_path: ""
+    service_account_path: "E:/google cloud acess key for robert_waltos_net.json"
+    duplicates_folder_name: "DRIVE DUPLICATES FROM OTHER FOLDERS"
+    duplicates_folder_id: ""
+    scopes:
+      - "https://www.googleapis.com/auth/drive"
+    upload_enabled: false
+    upload_apply: false
+    upload_verify: true
+    upload_delete_after: false
+    upload_skip_existing: true
+    upload_chunk_mb: 8
+    upload_root_id: "root"
+    local_root: "G:/My Drive"
+
+corruption:
+  enabled: true
+  repair_enabled: false
+  repair_output: "F:/__CORRUPTED_FILES/repairs"
+  max_files_per_run: 0
+
+safety:
+  require_approval_for_deletion: true
+  backup_before_move: false
+  checkpoint_interval_seconds: 300
+  checkpoint_after_files: 500
+  require_confirmation_for_resume: true
+  require_confirmation_for_permission_retry: true
+  require_confirmation_for_duplicate_moves: true
+  require_confirmation_for_organization_moves: true
+  require_confirmation_for_cloud_moves: true
+  allow_rollback: false
+
+hashing:
+  full_hash_max_bytes: 104857600
+  hybrid_chunk_bytes: 1048576
+
+duplicates:
+  report_prefix: "duplicate_report"
+  plan_prefix: "movement_plan"
+  review_manifest_prefix: "duplicate_review"
+  backup_action: "copy"
+  apply_plan: false
+  delete_after_backup: true
+  delete_copy_after_backup: true
+  link_mode: ""
+  backup_before_link: true
+  primary_locations:
+    - "Documents"
+    - "Pictures"
+    - "Desktop"
+    - "Videos"
+    - "Music"
+  google_drive_marker: "G:\\My Drive"
+  google_drive_target: "G:\\My Drive\\DRIVE DUPLICATES FROM OTHER FOLDERS"
+
+thumbnails:
+  enabled: true
+  apply_cleanup: true
+  report_prefix: "thumbnail_report"
+  result_prefix: "thumbnail_cleanup"
+  action: "move"
+  quarantine_path: "F:/Thumbnails_to_delete"
+  max_size_bytes: 1048576
+  max_dimension_px: 512
+  image_extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".gif"
+    - ".bmp"
+    - ".webp"
+    - ".tif"
+    - ".tiff"
+    - ".heic"
+    - ".heif"
+  name_markers:
+    - "thumb"
+    - "thumbnail"
+    - "preview"
+    - "tbn"
+    - "tn"
+  directory_markers:
+    - "thumbs"
+    - "thumbnails"
+    - ".thumbnails"
+    - "previews"
+    - "preview"
+  cover_name_markers:
+    - "cover"
+    - "folder"
+    - "front"
+    - "album"
+    - "albumart"
+    - "artwork"
+    - "poster"
+    - "booklet"
+  cover_audio_extensions:
+    - ".mp3"
+    - ".flac"
+    - ".wav"
+    - ".aac"
+    - ".m4a"
+    - ".ogg"
+    - ".wma"
+    - ".alac"
+    - ".aiff"
+    - ".ape"
+  cover_doc_extensions:
+    - ".pdf"
+    - ".doc"
+    - ".docx"
+    - ".ppt"
+    - ".pptx"
+    - ".xls"
+    - ".xlsx"
+    - ".odt"
+    - ".ods"
+    - ".odp"
+    - ".rtf"
+    - ".txt"
+    - ".epub"
+    - ".mobi"
+    - ".azw"
+    - ".azw3"
+    - ".cbz"
+    - ".cbr"
+
+exclusions:
+  system_paths:
+    - "C:/Windows"
+    - "C:/Program Files"
+    - "C:/Program Files (x86)"
+  file_patterns:
+    - "*.sys"
+    - "*.dll"
+    - "hiberfil.sys"
+    - "pagefile.sys"
+    - "*System Volume Information*"

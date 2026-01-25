@@ -1,0 +1,6 @@
+torch>=2.2
+torchvision>=0.17
+transformers>=4.38
+sentence-transformers>=2.6
+nudenet>=3.0
+clip @ git+https://github.com/openai/CLIP.git

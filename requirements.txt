@@ -1,0 +1,4 @@
+-r requirements/base.txt
+-r requirements/file_handling.txt
+-r requirements/ai.txt
+-r requirements/cloud.txt

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+
+# Local runtime data
+logs/
+data/
+
+# Local databases
+*.sqlite
+
+# OS junk
+Thumbs.db
+.DS_Store
