@@ -509,7 +509,7 @@ class DatabaseManager:
                 SET status = ?, updated_at = ?, last_error = ?
                 WHERE task_id = ?
                 """,
-                (status, now, last_error),
+                (status, now, last_error, task_id),
             )
         self._state_conn.commit()
 
