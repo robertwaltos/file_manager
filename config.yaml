@@ -54,7 +54,7 @@ merge_jobs:
 
 resource_limits:
   max_cpu_percent: 33
-  max_ram_percent: 33
+  max_ram_percent: 0
   max_gpu_percent: 90
   max_throttle_seconds: 15
   threads:
