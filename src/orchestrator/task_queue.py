@@ -5,9 +5,11 @@ Task queue with dependency resolution for orchestrator workflows.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
+from config import AppConfig
 from database import DatabaseManager
 
 
@@ -27,9 +29,15 @@ class Task:
 class TaskQueue:
     """Queue runner that enforces task dependencies and status tracking."""
 
-    def __init__(self, db_manager: DatabaseManager, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        logger: Optional[logging.Logger] = None,
+        config: Optional[AppConfig] = None,
+    ) -> None:
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
+        self.config = config
         self.tasks: list[Task] = []
 
     def register(self, tasks: Iterable[Task]) -> None:
@@ -51,6 +59,15 @@ class TaskQueue:
             if not self._dependencies_completed(task):
                 self.logger.info("Task blocked by dependencies: %s", task.name)
                 continue
+            if self._requires_approval(task) and not self._is_approved(task):
+                env_key = f"FILE_MANAGER_APPROVE_{task.task_id.upper()}"
+                self.logger.warning(
+                    "Task awaiting approval: %s. Set %s=1 or safety.phase_approvals.%s: true",
+                    task.name,
+                    env_key,
+                    task.task_id,
+                )
+                continue
             try:
                 self.db_manager.update_task_status(task.task_id, "in_progress")
                 self.logger.info("Starting task: %s", task.name)
@@ -70,3 +87,27 @@ class TaskQueue:
             if status != "completed":
                 return False
         return True
+
+    def _requires_approval(self, task: Task) -> bool:
+        if self.config is None:
+            return False
+        require_approval = bool(
+            self.config.get("safety", "require_phase_approval", default=False)
+        )
+        if not require_approval:
+            return False
+        approval_tasks = self.config.get("safety", "phase_approval_tasks", default=[])
+        if approval_tasks:
+            return task.task_id in approval_tasks
+        return True
+
+    def _is_approved(self, task: Task) -> bool:
+        if os.environ.get("FILE_MANAGER_APPROVE_ALL", "").lower() in {"1", "true", "yes"}:
+            return True
+        env_key = f"FILE_MANAGER_APPROVE_{task.task_id.upper()}"
+        if os.environ.get(env_key, "").lower() in {"1", "true", "yes"}:
+            return True
+        if self.config is None:
+            return False
+        approvals = self.config.get("safety", "phase_approvals", default={})
+        return bool(approvals.get(task.task_id, False))

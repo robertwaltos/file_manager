@@ -244,6 +244,9 @@ safety:
   require_confirmation_for_organization_moves: true
   require_confirmation_for_cloud_moves: true
   allow_rollback: false
+  require_phase_approval: true
+  phase_approval_tasks: []
+  phase_approvals: {}
 
 hashing:
   full_hash_max_bytes: 104857600

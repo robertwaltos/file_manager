@@ -112,7 +112,7 @@ class Orchestrator:
         self.rollback_manager = RollbackManager(
             self.db_manager, logger=self.logger, monitor=self.resource_monitor
         )
-        self.task_queue = TaskQueue(self.db_manager, logger=self.logger)
+        self.task_queue = TaskQueue(self.db_manager, logger=self.logger, config=self.config)
         self.checkpoint_interval = int(
             self.config.get("safety", "checkpoint_interval_seconds", default=300)
         )
