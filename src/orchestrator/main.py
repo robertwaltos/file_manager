@@ -247,6 +247,18 @@ class Orchestrator:
             if not source or not target:
                 self.logger.warning("Merge job missing source/target: %s", name)
                 continue
+            source_path = Path(source)
+            target_path = Path(target)
+            if not source_path.exists():
+                self.logger.info(
+                    "Merge source missing; skipping job (%s): %s", name, source_path
+                )
+                continue
+            if not target_path.exists():
+                self.logger.warning(
+                    "Merge target missing; skipping job (%s): %s", name, target_path
+                )
+                continue
             inbox = job.get("inbox_root")
             report_path = job.get("report_path")
             apply_moves = bool(job.get("apply", False))
@@ -256,8 +268,8 @@ class Orchestrator:
             try:
                 result = run_merge_job(
                     self.config,
-                    source_root=Path(source),
-                    target_root=Path(target),
+                    source_root=source_path,
+                    target_root=target_path,
                     inbox_root=Path(inbox) if inbox else None,
                     apply=apply_moves,
                     delete_old=delete_old,
