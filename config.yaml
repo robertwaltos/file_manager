@@ -56,6 +56,7 @@ resource_limits:
   max_cpu_percent: 33
   max_ram_percent: 33
   max_gpu_percent: 90
+  max_throttle_seconds: 15
   threads:
     scanning: 4
     hashing: 6

@@ -44,6 +44,9 @@ class Orchestrator:
         self.resource_monitor = ResourceMonitor(
             max_cpu_percent=float(self.config.get("resource_limits", "max_cpu_percent", default=33)),
             max_ram_percent=float(self.config.get("resource_limits", "max_ram_percent", default=33)),
+            max_throttle_seconds=float(
+                self.config.get("resource_limits", "max_throttle_seconds", default=15)
+            ),
         )
         self.progress_reporter = ProgressReporter(
             self.db_paths,
