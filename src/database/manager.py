@@ -1029,6 +1029,24 @@ class DatabaseManager:
         )
         return list(cursor.fetchall())
 
+    def get_latest_incomplete_operation(self, operation_type: str) -> Optional[dict]:
+        """Return the most recent in-progress operation for a given type."""
+        self.connect()
+        cursor = self._state_conn.execute(
+            """
+            SELECT operation_id, started_at, details
+            FROM operations
+            WHERE status = 'in_progress' AND operation_type = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (operation_type,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {"operation_id": row[0], "started_at": row[1], "details": row[2]}
+
     def save_checkpoint(
         self,
         operation_id: str,

@@ -293,12 +293,29 @@ class Orchestrator:
                 raise
 
     def _run_scan(self) -> None:
-        operation_id = self.db_manager.start_operation("scan")
-        self.logger.info("Starting scan operation %s", operation_id)
+        resume_operation = self.db_manager.get_latest_incomplete_operation("scan")
+        checkpoint = None
+        if resume_operation:
+            operation_id = resume_operation["operation_id"]
+            checkpoint = self.db_manager.get_checkpoint(operation_id, "discovery")
+            self.logger.warning(
+                "Resuming scan operation %s started at %s",
+                operation_id,
+                resume_operation["started_at"],
+            )
+            if checkpoint and checkpoint.get("last_file_path"):
+                self.logger.warning(
+                    "Resuming from checkpoint updated at %s (last file: %s)",
+                    checkpoint.get("updated_at"),
+                    checkpoint.get("last_file_path"),
+                )
+        else:
+            operation_id = self.db_manager.start_operation("scan")
+            self.logger.info("Starting scan operation %s", operation_id)
 
-        processed_files = 0
+        processed_files = int(checkpoint.get("processed_files", 0)) if checkpoint else 0
         last_checkpoint_time = time.monotonic()
-        last_file_path = None
+        last_file_path = checkpoint.get("last_file_path") if checkpoint else None
         skip_completed = bool(self.config.get("scan", "skip_completed", default=False))
         invalidate_on_change = bool(
             self.config.get("scan", "invalidate_hashes_on_change", default=True)
@@ -309,19 +326,59 @@ class Orchestrator:
         )
         scan_start = datetime.utcnow().isoformat()
         skipped_roots: list[Path] = []
+        resume_root = None
+        if checkpoint and checkpoint.get("extra"):
+            resume_root = checkpoint["extra"].get("root")
+        if not resume_root and last_file_path:
+            try:
+                anchor = Path(last_file_path).anchor
+            except (OSError, RuntimeError):
+                anchor = ""
+            resume_root = anchor or None
+        resume_root_value = None
+        if resume_root:
+            resume_root_value = os.path.normcase(os.path.normpath(str(resume_root)))
+        resume_root_seen = resume_root_value is None
+        resume_after = None
+        last_root = None
+        last_drive_key = None
 
         try:
-            for root in self._scan_roots():
+            roots = list(self._scan_roots())
+            if resume_root_value is not None:
+                normalized_roots = [os.path.normcase(os.path.normpath(str(root))) for root in roots]
+                if resume_root_value not in normalized_roots:
+                    self.logger.warning(
+                        "Resume root %s not in configured scan roots; starting from beginning.",
+                        resume_root,
+                    )
+                    resume_root_value = None
+                    resume_root_seen = True
+            for root in roots:
                 if not root.exists():
                     self.logger.warning("Scan root does not exist: %s", root)
                     continue
+                if not resume_root_seen:
+                    current_root_value = os.path.normcase(os.path.normpath(str(root)))
+                    if current_root_value != resume_root_value:
+                        self.logger.info("Skipping root before resume checkpoint: %s", root)
+                        continue
+                    resume_root_seen = True
+                    resume_after = last_file_path
                 drive_key = self.db_manager.normalize_drive_key(root)
                 if skip_completed and self.db_manager.is_drive_completed(drive_key):
                     self.logger.info("Skipping completed drive %s (%s)", drive_key, root)
                     skipped_roots.append(root)
+                    resume_after = None
                     continue
                 self.logger.info("Scanning root: %s", root)
-                for record in self.scanner.scan(root, monitor=self.resource_monitor):
+                if resume_after:
+                    self.logger.warning("Resuming scan within root %s after %s", root, resume_after)
+                for record in self.scanner.scan(
+                    root,
+                    monitor=self.resource_monitor,
+                    resume_after=resume_after,
+                ):
                     result = self.db_manager.upsert_file_with_status(record)
                     if invalidate_on_change and result.changed and record.accessible:
                         self.db_manager.invalidate_hashes(result.file_id)
@@ -336,8 +393,12 @@ class Orchestrator:
                             processed_files=processed_files,
                             total_files=None,
                             last_file_path=last_file_path,
+                            extra={"root": str(root), "drive_key": drive_key},
                         )
                         last_checkpoint_time = time.monotonic()
+                resume_after = None
+                last_root = str(root)
+                last_drive_key = drive_key
                 self.db_manager.mark_drive_completed(drive_key, notes="scan_completed")
 
             self.db_manager.save_checkpoint(
@@ -346,6 +407,7 @@ class Orchestrator:
                 processed_files=processed_files,
                 total_files=None,
                 last_file_path=last_file_path,
+                extra={"root": last_root, "drive_key": last_drive_key} if last_root else None,
             )
             if detect_removed:
                 if detect_removed_full_only and skipped_roots:

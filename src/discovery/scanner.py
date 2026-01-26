@@ -32,16 +32,21 @@ class Scanner:
         self.excluded_patterns = self.config.get("exclusions", "file_patterns", default=[])
         self.scan_threads = int(self.config.get("resource_limits", "threads", "scanning", default=4))
 
-    def scan(self, root: Path, monitor: Optional[ResourceMonitor] = None) -> Iterable[FileRecord]:
+    def scan(
+        self,
+        root: Path,
+        monitor: Optional[ResourceMonitor] = None,
+        resume_after: Optional[str] = None,
+    ) -> Iterable[FileRecord]:
         """Scan a root path and yield file metadata records."""
         if not root.exists():
             return []
         if self.scan_threads <= 1:
-            return self._scan_sequential(root)
-        return self._scan_threaded(root, monitor)
+            return self._scan_sequential(root, resume_after)
+        return self._scan_threaded(root, monitor, resume_after)
 
-    def _scan_sequential(self, root: Path) -> Iterable[FileRecord]:
-        for entry in self._iter_files(root):
+    def _scan_sequential(self, root: Path, resume_after: Optional[str]) -> Iterable[FileRecord]:
+        for entry in self._iter_files(root, resume_after):
             file_path = str(entry)
             if not self.incremental and self.db_manager.file_exists(file_path):
                 continue
@@ -49,11 +54,16 @@ class Scanner:
             self._handle_permission_issue(record, context="scan")
             yield record
 
-    def _scan_threaded(self, root: Path, monitor: Optional[ResourceMonitor]) -> Iterable[FileRecord]:
+    def _scan_threaded(
+        self,
+        root: Path,
+        monitor: Optional[ResourceMonitor],
+        resume_after: Optional[str],
+    ) -> Iterable[FileRecord]:
         pending = []
         max_pending = max(self.scan_threads * 2, 1)
         with ThreadPoolExecutor(max_workers=self.scan_threads) as executor:
-            for entry in self._iter_files(root):
+            for entry in self._iter_files(root, resume_after):
                 file_path = str(entry)
                 if not self.incremental and self.db_manager.file_exists(file_path):
                     continue
@@ -72,8 +82,13 @@ class Scanner:
             self._handle_permission_issue(record, context="scan")
             yield record
 
-    def _iter_files(self, root: Path) -> Iterator[Path]:
+    def _iter_files(self, root: Path, resume_after: Optional[str] = None) -> Iterator[Path]:
         """Yield file paths under a root, handling permission errors."""
+        resume_after_value = None
+        if resume_after:
+            resume_after_value = os.path.normcase(os.path.normpath(resume_after))
+        resume_ready = resume_after_value is None
+
         def on_error(error: OSError) -> None:
             if isinstance(error, PermissionError):
                 self.db_manager.record_permission_issue(str(error.filename), str(error), "scan")
@@ -85,17 +100,27 @@ class Scanner:
             if self._is_hidden(current) or self._is_excluded(current):
                 dirnames[:] = []
                 continue
+            dirnames.sort(key=str.lower)
             dirnames[:] = [
                 name
                 for name in dirnames
                 if not self._is_hidden(current / name) and not self._is_excluded(current / name)
             ]
+            filenames.sort(key=str.lower)
             for filename in filenames:
                 file_path = Path(dirpath) / filename
                 if not self.follow_symlinks and file_path.is_symlink():
                     continue
                 if self._is_hidden(file_path) or self._is_excluded(file_path):
                     continue
+                if not resume_ready and resume_after_value is not None:
+                    current_value = os.path.normcase(os.path.normpath(str(file_path)))
+                    if current_value == resume_after_value:
+                        resume_ready = True
+                        continue
+                    if current_value < resume_after_value:
+                        continue
+                    resume_ready = True
                 yield file_path
 
     def _handle_permission_issue(self, record: FileRecord, context: str) -> None:
@@ -150,7 +175,18 @@ class Scanner:
                 accessible=True,
                 permission_error=None,
             )
-        except (OSError, PermissionError) as exc:
+        except (OSError, PermissionError, ValueError) as exc:
+            return FileRecord(
+                file_path=str(path),
+                file_name=path.name,
+                size=0,
+                creation_date="",
+                modification_date="",
+                scan_date=scan_date,
+                accessible=False,
+                permission_error=str(exc),
+            )
+        except Exception as exc:
             return FileRecord(
                 file_path=str(path),
                 file_name=path.name,
