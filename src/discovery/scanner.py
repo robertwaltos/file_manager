@@ -37,19 +37,29 @@ class Scanner:
         root: Path,
         monitor: Optional[ResourceMonitor] = None,
         resume_after: Optional[str] = None,
+        existing_paths: Optional[set[str]] = None,
     ) -> Iterable[FileRecord]:
         """Scan a root path and yield file metadata records."""
         if not root.exists():
             return []
         if self.scan_threads <= 1:
-            return self._scan_sequential(root, resume_after)
-        return self._scan_threaded(root, monitor, resume_after)
+            return self._scan_sequential(root, resume_after, existing_paths)
+        return self._scan_threaded(root, monitor, resume_after, existing_paths)
 
-    def _scan_sequential(self, root: Path, resume_after: Optional[str]) -> Iterable[FileRecord]:
+    def _scan_sequential(
+        self,
+        root: Path,
+        resume_after: Optional[str],
+        existing_paths: Optional[set[str]],
+    ) -> Iterable[FileRecord]:
         for entry in self._iter_files(root, resume_after):
             file_path = str(entry)
-            if not self.incremental and self.db_manager.file_exists(file_path):
-                continue
+            if not self.incremental:
+                if existing_paths is not None:
+                    if file_path in existing_paths:
+                        continue
+                elif self.db_manager.file_exists(file_path):
+                    continue
             record = self._build_record(entry)
             self._handle_permission_issue(record, context="scan")
             yield record
@@ -59,14 +69,19 @@ class Scanner:
         root: Path,
         monitor: Optional[ResourceMonitor],
         resume_after: Optional[str],
+        existing_paths: Optional[set[str]],
     ) -> Iterable[FileRecord]:
         pending = []
         max_pending = max(self.scan_threads * 2, 1)
         with ThreadPoolExecutor(max_workers=self.scan_threads) as executor:
             for entry in self._iter_files(root, resume_after):
                 file_path = str(entry)
-                if not self.incremental and self.db_manager.file_exists(file_path):
-                    continue
+                if not self.incremental:
+                    if existing_paths is not None:
+                        if file_path in existing_paths:
+                            continue
+                    elif self.db_manager.file_exists(file_path):
+                        continue
                 if monitor is not None:
                     monitor.throttle()
                 pending.append(executor.submit(self._build_record, entry))

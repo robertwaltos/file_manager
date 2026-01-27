@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,12 +22,14 @@ try:
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
 except ImportError:  # pragma: no cover
     service_account = None
     Credentials = None
     InstalledAppFlow = None
     Request = None
     build = None
+    HttpError = None
 
 
 @dataclass
@@ -65,6 +69,15 @@ class GoogleDriveDedupeEngine:
             "cloud", "google_drive", "duplicates_folder_id", default=None
         )
         self.logs_root = self.config.resolve_path("paths", "logs", default="logs")
+        self.retry_max_attempts = int(
+            self.config.get("cloud", "google_drive", "retry_max_attempts", default=5)
+        )
+        self.retry_base_delay = float(
+            self.config.get("cloud", "google_drive", "retry_base_delay_seconds", default=1)
+        )
+        self.retry_max_delay = float(
+            self.config.get("cloud", "google_drive", "retry_max_delay_seconds", default=30)
+        )
 
     def run(self) -> Optional[GoogleDriveDedupeStats]:
         if not self.enabled:
@@ -146,15 +159,16 @@ class GoogleDriveDedupeEngine:
         files = []
         page_token = None
         while True:
-            response = (
-                service.files()
-                .list(
+            response = self._execute_with_retry(
+                lambda: service.files().list(
                     q="trashed = false",
                     fields="nextPageToken, files(id, name, size, md5Checksum, mimeType, parents)",
                     pageToken=page_token,
-                )
-                .execute()
+                ),
+                context="list_files",
             )
+            if response is None:
+                break
             files.extend(response.get("files", []))
             page_token = response.get("nextPageToken")
             if not page_token:
@@ -178,43 +192,74 @@ class GoogleDriveDedupeEngine:
     def _ensure_duplicates_folder(self, service) -> Optional[str]:
         if self.duplicates_folder_id:
             return self.duplicates_folder_id
-        response = (
-            service.files()
-            .list(
+        response = self._execute_with_retry(
+            lambda: service.files().list(
                 q=f"mimeType='application/vnd.google-apps.folder' and name='{self.duplicates_folder_name}' and trashed=false",
                 fields="files(id, name)",
-            )
-            .execute()
+            ),
+            context="find_duplicates_folder",
         )
+        if response is None:
+            return None
         files = response.get("files", [])
         if files:
             return files[0]["id"]
-        folder = (
-            service.files()
-            .create(
+        folder = self._execute_with_retry(
+            lambda: service.files().create(
                 body={
                     "name": self.duplicates_folder_name,
                     "mimeType": "application/vnd.google-apps.folder",
                 },
                 fields="id",
-            )
-            .execute()
+            ),
+            context="create_duplicates_folder",
         )
+        if folder is None:
+            return None
         return folder.get("id")
 
     def _move_file(self, service, file_id: str, target_folder_id: str, parents: list) -> bool:
         remove_parents = ",".join(parents) if parents else None
-        try:
-            service.files().update(
+        response = self._execute_with_retry(
+            lambda: service.files().update(
                 fileId=file_id,
                 addParents=target_folder_id,
                 removeParents=remove_parents,
                 fields="id, parents",
-            ).execute()
-            return True
-        except Exception as exc:
-            self.logger.warning("Drive move failed for %s: %s", file_id, exc)
-            return False
+            ),
+            context=f"move_file:{file_id}",
+        )
+        return response is not None
+
+    def _execute_with_retry(self, build_request, context: str):
+        attempts = max(self.retry_max_attempts, 1)
+        delay = max(self.retry_base_delay, 0.1)
+        for attempt in range(1, attempts + 1):
+            try:
+                return build_request().execute()
+            except Exception as exc:
+                retryable = self._is_retryable(exc)
+                if not retryable or attempt >= attempts:
+                    self.logger.warning("Drive %s failed: %s", context, exc)
+                    return None
+                sleep_for = min(self.retry_max_delay, delay * (2 ** (attempt - 1)))
+                sleep_for += random.uniform(0, 0.25 * sleep_for)
+                self.logger.warning(
+                    "Drive %s failed (attempt %s/%s). Retrying in %.1fs: %s",
+                    context,
+                    attempt,
+                    attempts,
+                    sleep_for,
+                    exc,
+                )
+                time.sleep(sleep_for)
+
+    def _is_retryable(self, exc: Exception) -> bool:
+        if HttpError is not None and isinstance(exc, HttpError):
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            if status in {429, 500, 502, 503, 504}:
+                return True
+        return isinstance(exc, OSError)
 
     def _write_report(self, groups: list[list[dict]], moved: int, skipped: int) -> Path:
         self.logs_root.mkdir(parents=True, exist_ok=True)

@@ -5,7 +5,7 @@ Resource monitoring and throttling helpers.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import psutil
 
@@ -18,6 +18,8 @@ class ResourceMonitor:
     max_ram_percent: float
     sleep_seconds: float = 0.5
     max_throttle_seconds: float = 15.0
+    min_check_interval_seconds: float = 0.5
+    _last_check: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         psutil.cpu_percent(interval=None)
@@ -26,6 +28,10 @@ class ResourceMonitor:
         """Sleep while CPU or RAM usage exceeds thresholds."""
         if self.max_cpu_percent <= 0 and self.max_ram_percent <= 0:
             return
+        now = time.monotonic()
+        if (now - self._last_check) < self.min_check_interval_seconds:
+            return
+        self._last_check = now
         start_time = time.monotonic()
         while True:
             cpu = psutil.cpu_percent(interval=0.1)

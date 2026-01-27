@@ -99,10 +99,13 @@ class CorruptionValidator:
             corrupted += 1
             self.db_manager.record_corruption(entry.file_id, result.error_type, result.error_message)
             repair_path = None
+            repair_error = ""
             if self.repair_enabled:
-                repair_path = self._attempt_repair(path)
+                repair_path, repair_error = self._attempt_repair(path)
                 if repair_path:
                     repaired += 1
+                elif repair_error:
+                    errors += 1
             results.append(
                 {
                     "file_id": entry.file_id,
@@ -110,6 +113,7 @@ class CorruptionValidator:
                     "error_type": result.error_type,
                     "error_message": result.error_message,
                     "repair_path": str(repair_path) if repair_path else "",
+                    "repair_error": repair_error,
                 }
             )
 
@@ -137,7 +141,7 @@ class CorruptionValidator:
             report_path=report_path,
         )
 
-    def _attempt_repair(self, path: Path) -> Optional[Path]:
+    def _attempt_repair(self, path: Path) -> tuple[Optional[Path], str]:
         suffix = path.suffix.lower()
         if suffix in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp"}:
             return self._repair_image(path)
@@ -151,24 +155,24 @@ class CorruptionValidator:
             return self._repair_xlsx(path)
         if suffix in {".zip"}:
             return self._repair_zip(path)
-        return None
+        return None, "unsupported_extension"
 
-    def _repair_image(self, path: Path) -> Optional[Path]:
+    def _repair_image(self, path: Path) -> tuple[Optional[Path], str]:
         if Image is None:
-            return None
+            return None, "pillow_missing"
         try:
             with Image.open(path) as img:
                 img.load()
                 output = self._repair_output_path(path, suffix_override=path.suffix)
                 output.parent.mkdir(parents=True, exist_ok=True)
                 img.save(output)
-                return output
-        except Exception:
-            return None
+                return output, ""
+        except Exception as exc:
+            return None, str(exc)
 
-    def _repair_video(self, path: Path) -> Optional[Path]:
+    def _repair_video(self, path: Path) -> tuple[Optional[Path], str]:
         if shutil.which("ffmpeg") is None:
-            return None
+            return None, "ffmpeg_missing"
         output = self._repair_output_path(path, suffix_override=path.suffix)
         output.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -180,50 +184,50 @@ class CorruptionValidator:
                 timeout=120,
             )
             if result.returncode != 0:
-                return None
-        except Exception:
-            return None
-        return output if output.exists() else None
+                return None, result.stderr.strip() or "ffmpeg_failed"
+        except Exception as exc:
+            return None, str(exc)
+        return (output, "") if output.exists() else (None, "ffmpeg_no_output")
 
-    def _repair_pdf(self, path: Path) -> Optional[Path]:
+    def _repair_pdf(self, path: Path) -> tuple[Optional[Path], str]:
         if fitz is None:
-            return None
+            return None, "pymupdf_missing"
         try:
             doc = fitz.open(path)
             output = self._repair_output_path(path, suffix_override=path.suffix)
             output.parent.mkdir(parents=True, exist_ok=True)
             doc.save(output)
             doc.close()
-            return output
-        except Exception:
-            return None
+            return output, ""
+        except Exception as exc:
+            return None, str(exc)
 
-    def _repair_docx(self, path: Path) -> Optional[Path]:
+    def _repair_docx(self, path: Path) -> tuple[Optional[Path], str]:
         if docx is None:
-            return None
+            return None, "python_docx_missing"
         try:
             document = docx.Document(path)
             output = self._repair_output_path(path, suffix_override=path.suffix)
             output.parent.mkdir(parents=True, exist_ok=True)
             document.save(output)
-            return output
-        except Exception:
-            return None
+            return output, ""
+        except Exception as exc:
+            return None, str(exc)
 
-    def _repair_xlsx(self, path: Path) -> Optional[Path]:
+    def _repair_xlsx(self, path: Path) -> tuple[Optional[Path], str]:
         if openpyxl is None:
-            return None
+            return None, "openpyxl_missing"
         try:
             workbook = openpyxl.load_workbook(path, read_only=False, data_only=True)
             output = self._repair_output_path(path, suffix_override=path.suffix)
             output.parent.mkdir(parents=True, exist_ok=True)
             workbook.save(output)
             workbook.close()
-            return output
-        except Exception:
-            return None
+            return output, ""
+        except Exception as exc:
+            return None, str(exc)
 
-    def _repair_zip(self, path: Path) -> Optional[Path]:
+    def _repair_zip(self, path: Path) -> tuple[Optional[Path], str]:
         import tempfile
         import zipfile
 
@@ -238,9 +242,9 @@ class CorruptionValidator:
                         for file_path in root_path.rglob("*"):
                             if file_path.is_file():
                                 out_zip.write(file_path, file_path.relative_to(root_path))
-                    return output
-        except Exception:
-            return None
+                    return output, ""
+        except Exception as exc:
+            return None, str(exc)
 
     def _repair_output_path(self, path: Path, suffix_override: str) -> Path:
         safe_name = path.stem + "_repaired" + suffix_override

@@ -36,6 +36,8 @@ scan:
   invalidate_hashes_on_change: true
   detect_removed: false
   detect_removed_full_only: true
+  prefetch_existing_paths: true
+  prefetch_max_entries: 250000
 
 merge:
   progress_every: 250
@@ -57,6 +59,7 @@ resource_limits:
   max_ram_percent: 0
   max_gpu_percent: 90
   max_throttle_seconds: 15
+  min_check_interval_seconds: 0.5
   threads:
     scanning: 4
     hashing: 6
@@ -227,6 +230,9 @@ cloud:
     upload_chunk_mb: 8
     upload_root_id: "root"
     local_root: "G:/My Drive"
+    retry_max_attempts: 5
+    retry_base_delay_seconds: 1
+    retry_max_delay_seconds: 30
 
 corruption:
   enabled: true
@@ -252,6 +258,7 @@ safety:
 hashing:
   full_hash_max_bytes: 104857600
   hybrid_chunk_bytes: 1048576
+  hash_exists_batch_size: 1000
 
 duplicates:
   report_prefix: "duplicate_report"

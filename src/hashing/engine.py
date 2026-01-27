@@ -61,6 +61,9 @@ class HashingEngine:
         )
         self.checkpoint_after_files = int(self.config.get("safety", "checkpoint_after_files", default=500))
         self.hash_threads = int(self.config.get("resource_limits", "threads", "hashing", default=4))
+        self.hash_exists_batch_size = int(
+            self.config.get("hashing", "hash_exists_batch_size", default=1000)
+        )
         self.hasher = Hasher(
             full_hash_max_bytes=int(
                 self.config.get("hashing", "full_hash_max_bytes", default=100 * 1024 * 1024)
@@ -95,9 +98,8 @@ class HashingEngine:
         last_file_path: Optional[str] = None
 
         if self.hash_threads <= 1:
-            for entry in entries:
-                expected_hash_type = self.hasher.hash_type_for_size(entry.size)
-                if self.db_manager.hash_exists(entry.file_id, expected_hash_type):
+            for entry, expected_hash_type, has_hash in self._iter_entries_with_hash_cache(entries):
+                if has_hash:
                     skipped_files += 1
                     processed_files += 1
                     if self._checkpoint_if_needed(
@@ -129,9 +131,8 @@ class HashingEngine:
             pending = []
             max_pending = max(self.hash_threads * 2, 1)
             with ThreadPoolExecutor(max_workers=self.hash_threads) as executor:
-                for entry in entries:
-                    expected_hash_type = self.hasher.hash_type_for_size(entry.size)
-                    if self.db_manager.hash_exists(entry.file_id, expected_hash_type):
+                for entry, expected_hash_type, has_hash in self._iter_entries_with_hash_cache(entries):
+                    if has_hash:
                         skipped_files += 1
                         processed_files += 1
                         if self._checkpoint_if_needed(
@@ -207,6 +208,35 @@ class HashingEngine:
             corrupted_files=corrupted_files,
             error_files=error_files,
         )
+
+    def _iter_entries_with_hash_cache(
+        self, entries: Iterable[InventoryEntry]
+    ) -> Iterable[tuple[InventoryEntry, str, bool]]:
+        batch: list[InventoryEntry] = []
+        batch_size = max(self.hash_exists_batch_size, 1)
+        for entry in entries:
+            batch.append(entry)
+            if len(batch) >= batch_size:
+                yield from self._yield_entries_with_hash_status(batch)
+                batch = []
+        if batch:
+            yield from self._yield_entries_with_hash_status(batch)
+
+    def _yield_entries_with_hash_status(
+        self, batch: list[InventoryEntry]
+    ) -> Iterable[tuple[InventoryEntry, str, bool]]:
+        groups: dict[str, list[InventoryEntry]] = {}
+        for entry in batch:
+            hash_type = self.hasher.hash_type_for_size(entry.size)
+            groups.setdefault(hash_type, []).append(entry)
+        existing: dict[str, set[int]] = {}
+        for hash_type, group_entries in groups.items():
+            ids = [entry.file_id for entry in group_entries]
+            existing[hash_type] = self.db_manager.fetch_hash_file_ids(ids, hash_type)
+        for entry in batch:
+            hash_type = self.hasher.hash_type_for_size(entry.size)
+            has_hash = entry.file_id in existing.get(hash_type, set())
+            yield entry, hash_type, has_hash
 
     def _process_entry(self, entry: InventoryEntry) -> HashJobResult:
         file_path = Path(entry.file_path)

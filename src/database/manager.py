@@ -5,11 +5,12 @@ SQLite database access layer for file inventory, hashing, and state persistence.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Sequence
 
 from .schema import create_databases
 
@@ -120,6 +121,12 @@ class DatabaseManager:
         except OSError:
             return str(root).lower()
 
+    def _root_prefix(self, root: Path) -> str:
+        value = str(root)
+        if not value.endswith(os.sep):
+            value = value + os.sep
+        return value
+
     def file_exists(self, file_path: str) -> bool:
         """Check whether a file already exists in the inventory."""
         self.connect()
@@ -128,6 +135,49 @@ class DatabaseManager:
             (file_path,),
         )
         return cursor.fetchone() is not None
+
+    def count_files_for_root(self, root: Path) -> int:
+        """Count inventory entries under a root prefix."""
+        self.connect()
+        prefix = self._root_prefix(root)
+        cursor = self._inventory_conn.execute(
+            "SELECT COUNT(*) FROM files WHERE file_path LIKE ?",
+            (prefix + "%",),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def iter_file_paths_for_root(self, root: Path, batch_size: int = 5000) -> Iterable[str]:
+        """Iterate file paths under a root prefix in batches."""
+        self.connect()
+        prefix = self._root_prefix(root)
+        cursor = self._inventory_conn.execute(
+            "SELECT file_path FROM files WHERE file_path LIKE ?",
+            (prefix + "%",),
+        )
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            for (file_path,) in rows:
+                if file_path:
+                    yield str(file_path)
+
+    def fetch_hash_file_ids(self, file_ids: Sequence[int], hash_type: str) -> set[int]:
+        """Return file IDs that already have a given hash type."""
+        self.connect()
+        if not file_ids:
+            return set()
+        existing: set[int] = set()
+        for chunk in _chunked(list(file_ids), 900):
+            placeholders = ",".join("?" for _ in chunk)
+            query = f"SELECT file_id FROM hashes WHERE hash_type = ? AND file_id IN ({placeholders})"
+            params = (hash_type, *chunk)
+            rows = self._hash_conn.execute(query, params).fetchall()
+            for (file_id,) in rows:
+                if file_id is not None:
+                    existing.add(int(file_id))
+        return existing
 
     def upsert_file(self, record: FileRecord) -> int:
         """Insert or update file metadata and return the record ID."""
@@ -1114,6 +1164,6 @@ class DatabaseManager:
         }
 
 
-def _chunked(values: list[str], size: int) -> Iterable[list[str]]:
+def _chunked(values: list, size: int) -> Iterable[list]:
     for index in range(0, len(values), size):
         yield values[index : index + size]

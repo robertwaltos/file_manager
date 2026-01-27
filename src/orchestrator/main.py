@@ -47,6 +47,9 @@ class Orchestrator:
             max_throttle_seconds=float(
                 self.config.get("resource_limits", "max_throttle_seconds", default=15)
             ),
+            min_check_interval_seconds=float(
+                self.config.get("resource_limits", "min_check_interval_seconds", default=0.5)
+            ),
         )
         self.progress_reporter = ProgressReporter(
             self.db_paths,
@@ -126,6 +129,7 @@ class Orchestrator:
         self.db_manager.initialize()
         self._ensure_paths()
         try:
+            self._log_optional_dependency_warnings()
             self._enforce_resume_confirmation()
             self._maybe_run_rollback()
             self.progress_reporter.start()
@@ -320,6 +324,7 @@ class Orchestrator:
         last_checkpoint_time = time.monotonic()
         last_file_path = checkpoint.get("last_file_path") if checkpoint else None
         skip_completed = bool(self.config.get("scan", "skip_completed", default=False))
+        incremental = bool(self.config.get("scan", "incremental", default=False))
         invalidate_on_change = bool(
             self.config.get("scan", "invalidate_hashes_on_change", default=True)
         )
@@ -375,12 +380,16 @@ class Orchestrator:
                     resume_after = None
                     continue
                 self.logger.info("Scanning root: %s", root)
+                existing_paths = None
+                if not incremental:
+                    existing_paths = self._prefetch_existing_paths(root)
                 if resume_after:
                     self.logger.warning("Resuming scan within root %s after %s", root, resume_after)
                 for record in self.scanner.scan(
                     root,
                     monitor=self.resource_monitor,
                     resume_after=resume_after,
+                    existing_paths=existing_paths,
                 ):
                     result = self.db_manager.upsert_file_with_status(record)
                     if invalidate_on_change and result.changed and record.accessible:
@@ -729,10 +738,83 @@ class Orchestrator:
             ]
         )
 
+    def _log_optional_dependency_warnings(self) -> None:
+        import importlib.util
+        import shutil
+
+        def missing(module: str) -> bool:
+            return importlib.util.find_spec(module) is None
+
+        warnings: list[str] = []
+        ai_enabled = bool(self.config.get("ai", "enabled", default=False))
+        nsfw_enabled = bool(self.config.get("nsfw", "enabled", default=False))
+        corruption_enabled = bool(self.config.get("corruption", "enabled", default=False))
+        repair_enabled = bool(self.config.get("corruption", "repair_enabled", default=False))
+        use_embeddings = bool(self.config.get("ai", "use_embeddings", default=False))
+
+        if ai_enabled:
+            if missing("PIL"):
+                warnings.append("Pillow missing: image analysis disabled")
+            if missing("transformers"):
+                warnings.append("transformers missing: CLIP image/text classification disabled")
+            if missing("sentence_transformers") and use_embeddings:
+                warnings.append("sentence-transformers missing: embedding-based doc classification disabled")
+            if missing("nudenet"):
+                warnings.append("nudenet missing: NSFW scoring disabled")
+            if missing("fitz"):
+                warnings.append("PyMuPDF missing: PDF text extraction disabled")
+            if missing("docx"):
+                warnings.append("python-docx missing: DOCX text extraction disabled")
+            if missing("openpyxl"):
+                warnings.append("openpyxl missing: spreadsheet text extraction disabled")
+
+        if nsfw_enabled and missing("PIL"):
+            warnings.append("Pillow missing: NSFW thumbnails disabled")
+
+        if corruption_enabled and missing("PIL"):
+            warnings.append("Pillow missing: image corruption checks limited")
+        if repair_enabled:
+            if missing("PIL"):
+                warnings.append("Pillow missing: image repair disabled")
+            if missing("fitz"):
+                warnings.append("PyMuPDF missing: PDF repair disabled")
+            if missing("docx"):
+                warnings.append("python-docx missing: DOCX repair disabled")
+            if missing("openpyxl"):
+                warnings.append("openpyxl missing: XLSX repair disabled")
+            if shutil.which("ffmpeg") is None:
+                warnings.append("ffmpeg missing: video repair disabled")
+
+        if warnings:
+            self.logger.warning("Optional dependency warnings: %s", "; ".join(warnings))
+
     def _scan_roots(self) -> Iterable[Path]:
         """Return configured scan roots as Path objects."""
         roots = self.config.get("scan", "roots", default=["."])
         return [Path(root).expanduser() for root in roots]
+
+    def _prefetch_existing_paths(self, root: Path) -> Optional[set[str]]:
+        if not bool(self.config.get("scan", "prefetch_existing_paths", default=False)):
+            return None
+        max_entries = int(self.config.get("scan", "prefetch_max_entries", default=0))
+        if max_entries <= 0:
+            return None
+        try:
+            count = self.db_manager.count_files_for_root(root)
+        except Exception as exc:
+            self.logger.warning("Prefetch count failed for %s: %s", root, exc)
+            return None
+        if count > max_entries:
+            self.logger.info(
+                "Prefetch skipped for %s (count %s exceeds limit %s)", root, count, max_entries
+            )
+            return None
+        self.logger.info("Prefetching %s existing paths for %s", count, root)
+        try:
+            return set(self.db_manager.iter_file_paths_for_root(root))
+        except Exception as exc:
+            self.logger.warning("Prefetch failed for %s: %s", root, exc)
+            return None
 
     def _enforce_resume_confirmation(self) -> None:
         """Require explicit confirmation before continuing after incomplete operations."""
