@@ -14,4 +14,17 @@ if ($Config) {
     $env:FILE_MANAGER_CONFIG = $Config
 }
 
+if (-not $env:FILE_MANAGER_DISABLE_TAIL) {
+    $tailScript = Join-Path $root "tail_performance.ps1"
+    if (Test-Path $tailScript) {
+        Start-Process powershell -ArgumentList @(
+            '-NoExit',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            $tailScript
+        )
+    }
+}
+
 & $python (Join-Path $root "src\\main.py")
