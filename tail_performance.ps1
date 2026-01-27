@@ -1,7 +1,8 @@
 Param(
     [string]$LogsPath = "logs",
     [string]$Pattern = "performance_log_*.log",
-    [int]$PollSeconds = 2
+    [int]$PollSeconds = 2,
+    [string]$FilterRegex = ""
 )
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -22,4 +23,8 @@ while ($null -eq $log) {
 }
 
 Write-Host ("Tailing " + $log.FullName)
-Get-Content -Path $log.FullName -Wait -Tail 0
+if ($FilterRegex) {
+    Get-Content -Path $log.FullName -Wait -Tail 0 | Where-Object { $_ -match $FilterRegex }
+} else {
+    Get-Content -Path $log.FullName -Wait -Tail 0
+}
