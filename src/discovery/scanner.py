@@ -14,7 +14,7 @@ from typing import Iterable, Iterator, Optional
 
 from config import AppConfig
 from database import DatabaseManager, FileRecord
-from utils import ResourceMonitor
+from utils import ResourceMonitor, is_cloud_placeholder
 
 
 class Scanner:
@@ -26,6 +26,9 @@ class Scanner:
         self.skip_hidden = bool(self.config.get("scan", "skip_hidden", default=True))
         self.follow_symlinks = bool(self.config.get("scan", "follow_symlinks", default=False))
         self.incremental = bool(self.config.get("scan", "incremental", default=False))
+        self.skip_cloud_placeholders = bool(
+            self.config.get("scan", "skip_cloud_placeholders", default=True)
+        )
         self.excluded_paths = [
             Path(path) for path in self.config.get("exclusions", "system_paths", default=[])
         ]
@@ -127,6 +130,11 @@ class Scanner:
                 if not self.follow_symlinks and file_path.is_symlink():
                     continue
                 if self._is_hidden(file_path) or self._is_excluded(file_path):
+                    continue
+                if self.skip_cloud_placeholders and is_cloud_placeholder(file_path):
+                    self.db_manager.record_permission_issue(
+                        str(file_path), "cloud_placeholder", "scan"
+                    )
                     continue
                 if not resume_ready and resume_after_value is not None:
                     current_value = os.path.normcase(os.path.normpath(str(file_path)))

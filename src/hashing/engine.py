@@ -15,7 +15,7 @@ from config import AppConfig
 from corruption.checker import CorruptionResult, IntegrityChecker
 from database import DatabaseManager, InventoryEntry
 from hashing.hasher import Hasher
-from utils import ResourceMonitor
+from utils import ResourceMonitor, is_cloud_placeholder
 
 
 @dataclass
@@ -249,6 +249,8 @@ class HashingEngine:
 
     def _process_entry(self, entry: InventoryEntry) -> HashJobResult:
         file_path = Path(entry.file_path)
+        if is_cloud_placeholder(file_path):
+            return HashJobResult(entry, None, None, None, "cloud_placeholder", "cloud_placeholder")
         try:
             file_size = file_path.stat().st_size
         except FileNotFoundError as exc:
@@ -292,7 +294,7 @@ class HashingEngine:
         if result.error_type:
             error_files += 1
             last_file_path = entry.file_path
-            if result.error_type == "permission_error":
+            if result.error_type in {"permission_error", "cloud_placeholder"}:
                 self.db_manager.update_file_access(entry.file_id, False, result.error_message)
                 self.db_manager.record_permission_issue(entry.file_path, result.error_message or "", "hashing")
             self.db_manager.record_corruption(entry.file_id, result.error_type, result.error_message or "")

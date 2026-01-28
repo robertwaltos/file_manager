@@ -38,6 +38,7 @@ scan:
   detect_removed_full_only: true
   prefetch_existing_paths: true
   prefetch_max_entries: 250000
+  skip_cloud_placeholders: true
 
 merge:
   progress_every: 250
