@@ -14,7 +14,7 @@ from typing import Optional
 
 from config import AppConfig
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 try:
     from PIL import Image
@@ -112,11 +112,16 @@ class AiCategorizationEngine:
         db_manager: DatabaseManager,
         logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("ai", "progress_log_interval", default=2000)
+        )
         self.enabled = bool(self.config.get("ai", "enabled", default=True))
         self.reprocess_existing = bool(self.config.get("ai", "reprocess_existing", default=False))
         self.max_files = int(self.config.get("ai", "max_files_per_run", default=0))
@@ -183,7 +188,7 @@ class AiCategorizationEngine:
         processed = skipped = errors = classified = nsfw_flagged = 0
         image_batch: list[tuple] = []
 
-        for entry in self.db_manager.iter_inventory(accessible_only=True):
+        for index, entry in enumerate(self.db_manager.iter_inventory(accessible_only=True), start=1):
             if self.max_files and processed >= self.max_files:
                 break
             path = Path(entry.file_path)
@@ -195,6 +200,17 @@ class AiCategorizationEngine:
                 continue
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("ai_categorization", index, interval=200)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "AI categorization progress: %s processed=%s classified=%s nsfw=%s skipped=%s errors=%s",
+                    index,
+                    processed,
+                    classified,
+                    nsfw_flagged,
+                    skipped,
+                    errors,
+                )
 
             ext = path.suffix.lower()
             if ext in IMAGE_EXTS and self.image_batch_size > 1:
@@ -205,6 +221,7 @@ class AiCategorizationEngine:
                     classified += batch_stats[1]
                     nsfw_flagged += batch_stats[2]
                     errors += batch_stats[3]
+                    self._touch("ai_batch", processed, interval=200)
                     image_batch = []
                 continue
 
@@ -248,6 +265,7 @@ class AiCategorizationEngine:
             classified += batch_stats[1]
             nsfw_flagged += batch_stats[2]
             errors += batch_stats[3]
+            self._touch("ai_batch", processed, interval=200)
 
         return AiCategorizationStats(
             processed=processed,
@@ -256,6 +274,12 @@ class AiCategorizationEngine:
             classified=classified,
             nsfw_flagged=nsfw_flagged,
         )
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _save_classification(
         self,

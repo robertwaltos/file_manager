@@ -15,7 +15,7 @@ from typing import Optional
 
 from config import AppConfig, ensure_directories
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 try:
     from PIL import Image, ImageFilter
@@ -45,12 +45,17 @@ class NsfwMover:
         logger: Optional[logging.Logger] = None,
         movement_logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.movement_logger = movement_logger or logging.getLogger("file_manager.movement")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("nsfw", "progress_log_interval", default=200)
+        )
         self.enabled = bool(self.config.get("nsfw", "enabled", default=True))
         self.move_flagged = bool(self.config.get("nsfw", "move_flagged", default=True))
         self.review_prefix = str(self.config.get("nsfw", "review_prefix", default="nsfw_review"))
@@ -81,7 +86,7 @@ class NsfwMover:
         if Image is not None:
             (self.review_root / self.thumbnail_subdir).mkdir(parents=True, exist_ok=True)
 
-        for entry in candidates:
+        for index, entry in enumerate(candidates, start=1):
             source_path = Path(entry["file_path"])
             if not source_path.exists():
                 skipped += 1
@@ -93,6 +98,15 @@ class NsfwMover:
                 continue
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("nsfw_quarantine", index, interval=100)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "NSFW quarantine progress: %s moved=%s skipped=%s errors=%s",
+                    index,
+                    moved,
+                    skipped,
+                    errors,
+                )
 
             destination = self._build_destination(source_path, entry["file_id"])
             destination = self._resolve_conflict(destination)
@@ -173,6 +187,12 @@ class NsfwMover:
             report_path=report_path,
             review_path=review_path,
         )
+
+    def _touch(self, note: str, count: int, interval: int = 100) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _build_destination(self, source_path: Path, file_id: int) -> Path:
         encoded_parent = self._encode_path(str(source_path.parent))

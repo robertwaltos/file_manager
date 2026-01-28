@@ -66,6 +66,9 @@ class HashingEngine:
         self.hash_exists_batch_size = int(
             self.config.get("hashing", "hash_exists_batch_size", default=1000)
         )
+        self.progress_log_interval = int(
+            self.config.get("hashing", "progress_log_interval", default=10000)
+        )
         self.integrity_checks_enabled = bool(
             self.config.get("hashing", "integrity_checks_enabled", default=True)
         )
@@ -115,6 +118,14 @@ class HashingEngine:
                         operation_id, processed_files, total_files, entry.file_path, last_checkpoint_time
                     ):
                         last_checkpoint_time = time.monotonic()
+                    self._log_progress(
+                        processed_files,
+                        total_files,
+                        hashed_files,
+                        skipped_files,
+                        corrupted_files,
+                        error_files,
+                    )
                     continue
                 result = self._process_entry(entry)
                 (
@@ -144,11 +155,19 @@ class HashingEngine:
                     if has_hash:
                         skipped_files += 1
                         processed_files += 1
-                        if self._checkpoint_if_needed(
-                            operation_id, processed_files, total_files, entry.file_path, last_checkpoint_time
-                        ):
-                            last_checkpoint_time = time.monotonic()
-                        continue
+                    if self._checkpoint_if_needed(
+                        operation_id, processed_files, total_files, entry.file_path, last_checkpoint_time
+                    ):
+                        last_checkpoint_time = time.monotonic()
+                    self._log_progress(
+                        processed_files,
+                        total_files,
+                        hashed_files,
+                        skipped_files,
+                        corrupted_files,
+                        error_files,
+                    )
+                    continue
                     if self.monitor is not None:
                         self.monitor.throttle()
                     pending.append(executor.submit(self._process_entry, entry))
@@ -318,6 +337,14 @@ class HashingEngine:
             operation_id, processed_files, total_files, last_file_path, last_checkpoint_time
         ):
             last_checkpoint_time = time.monotonic()
+        self._log_progress(
+            processed_files,
+            total_files,
+            hashed_files,
+            skipped_files,
+            corrupted_files,
+            error_files,
+        )
         if self.activity_tracker is not None:
             self.activity_tracker.touch("hashing")
         return (
@@ -353,3 +380,27 @@ class HashingEngine:
         if processed_files % self.checkpoint_after_files == 0:
             return True
         return (time.monotonic() - last_checkpoint_time) >= self.checkpoint_interval
+
+    def _log_progress(
+        self,
+        processed_files: int,
+        total_files: int,
+        hashed_files: int,
+        skipped_files: int,
+        corrupted_files: int,
+        error_files: int,
+    ) -> None:
+        if self.progress_log_interval <= 0:
+            return
+        if processed_files % self.progress_log_interval != 0:
+            return
+        total_label = total_files if total_files > 0 else "?"
+        self.logger.info(
+            "Hashing progress: %s/%s hashed=%s skipped=%s corruptions=%s errors=%s",
+            processed_files,
+            total_label,
+            hashed_files,
+            skipped_files,
+            corrupted_files,
+            error_files,
+        )

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import AppConfig
+from utils import ActivityTracker
 
 try:
     from google.oauth2 import service_account
@@ -44,9 +45,18 @@ class GoogleDriveUploadStats:
 class GoogleDriveUploadEngine:
     """Upload local files to Google Drive and verify checksums."""
 
-    def __init__(self, config: AppConfig, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        logger: Optional[logging.Logger] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
+    ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("file_manager")
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("cloud", "google_drive", "upload_progress_log_interval", default=100)
+        )
         self.enabled = bool(self.config.get("cloud", "google_drive", "upload_enabled", default=False))
         self.apply_uploads = bool(self.config.get("cloud", "google_drive", "upload_apply", default=False))
         self.require_confirmation = bool(
@@ -109,13 +119,23 @@ class GoogleDriveUploadEngine:
         uploaded = skipped = errors = 0
         results: list[dict] = []
 
-        for move in plan:
+        for index, move in enumerate(plan, start=1):
             source = Path(move["source"])
             if not source.exists():
                 skipped += 1
                 results.append(_result(move, "skipped", "source_missing"))
                 continue
             destination = Path(move["destination"])
+            self._touch("drive_upload", index, interval=25)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Drive upload progress: %s/%s uploaded=%s skipped=%s errors=%s",
+                    index,
+                    len(plan),
+                    uploaded,
+                    skipped,
+                    errors,
+                )
             try:
                 drive_path = destination.resolve().relative_to(self.local_root.resolve())
             except Exception:
@@ -174,6 +194,12 @@ class GoogleDriveUploadEngine:
             errors=errors,
             report_path=report_path,
         )
+
+    def _touch(self, note: str, count: int, interval: int = 25) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _build_service(self):
         creds = None

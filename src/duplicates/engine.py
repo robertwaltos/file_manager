@@ -16,7 +16,7 @@ from config import AppConfig, ensure_directories
 from database import DatabaseManager, DuplicateCandidate, FileMetadata
 from hashing.hasher import Hasher
 from metadata import MetadataScorer
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 
 @dataclass
@@ -40,15 +40,20 @@ class DuplicateEngine:
         db_manager: DatabaseManager,
         logger: Optional[logging.Logger],
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
         self.checkpoint_interval = int(
             self.config.get("safety", "checkpoint_interval_seconds", default=300)
         )
         self.checkpoint_after_groups = int(self.config.get("safety", "checkpoint_after_files", default=500))
+        self.progress_log_interval = int(
+            self.config.get("duplicates", "progress_log_interval", default=1000)
+        )
         self.hasher = Hasher(
             full_hash_max_bytes=int(
                 self.config.get("hashing", "full_hash_max_bytes", default=100 * 1024 * 1024)
@@ -84,6 +89,7 @@ class DuplicateEngine:
         report_groups: list[dict] = []
         skipped: list[dict] = []
 
+        total_groups: Optional[int] = None
         if candidates is None:
             candidate_iter = (
                 (candidate.file_name, candidate.size)
@@ -91,13 +97,15 @@ class DuplicateEngine:
             )
         else:
             candidate_iter = list({(name, size) for name, size in candidates})
+            total_groups = len(candidate_iter)
 
-        for file_name, size in candidate_iter:
+        for index, (file_name, size) in enumerate(candidate_iter, start=1):
             candidate_groups += 1
             files = self.db_manager.fetch_files_by_name_size(file_name, size)
             if len(files) < 2:
                 skipped_candidates += 1
                 continue
+            self._touch("duplicates", index, interval=200)
             candidate = DuplicateCandidate(file_name=file_name, size=size, count=len(files))
             groups, skipped_info, errors = self._evaluate_candidate(candidate, files)
             report_groups.extend(groups)
@@ -106,6 +114,14 @@ class DuplicateEngine:
             for group in groups:
                 duplicate_files += len(group["duplicates"])
             error_files += errors
+            self._log_progress(
+                candidate_groups,
+                total_groups,
+                duplicate_groups,
+                duplicate_files,
+                skipped_candidates,
+                error_files,
+            )
 
             if self._should_checkpoint(candidate_groups, last_checkpoint_time):
                 self.db_manager.save_checkpoint(
@@ -191,13 +207,14 @@ class DuplicateEngine:
     def _confirm_full_hash(self, files: list[FileMetadata]) -> tuple[list[dict], int]:
         error_files = 0
         grouped: dict[str, list[FileMetadata]] = {}
-        for file_meta in files:
+        for index, file_meta in enumerate(files, start=1):
             full_hash = self.db_manager.get_hash(file_meta.file_id, "sha256_full")
             if not full_hash:
                 full_hash = self._compute_full_hash(file_meta)
             if not full_hash:
                 error_files += 1
                 continue
+            self._touch("duplicates_full_hash", index, interval=100)
             grouped.setdefault(full_hash, []).append(file_meta)
 
         groups: list[dict] = []
@@ -283,6 +300,36 @@ class DuplicateEngine:
             return datetime.fromisoformat(value).timestamp()
         except (TypeError, ValueError):
             return 0.0
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
+
+    def _log_progress(
+        self,
+        candidate_groups: int,
+        total_groups: Optional[int],
+        duplicate_groups: int,
+        duplicate_files: int,
+        skipped_candidates: int,
+        error_files: int,
+    ) -> None:
+        if self.progress_log_interval <= 0:
+            return
+        if candidate_groups % self.progress_log_interval != 0:
+            return
+        total_label = total_groups if total_groups is not None else "?"
+        self.logger.info(
+            "Duplicate detection progress: %s/%s groups=%s dup_files=%s skipped=%s errors=%s",
+            candidate_groups,
+            total_label,
+            duplicate_groups,
+            duplicate_files,
+            skipped_candidates,
+            error_files,
+        )
 
     def _report_prefix(self) -> str:
         return str(self.config.get("duplicates", "report_prefix", default="duplicate_report"))

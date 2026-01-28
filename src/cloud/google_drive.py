@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import AppConfig
+from utils import ActivityTracker
 
 try:
     from google.oauth2 import service_account
@@ -45,9 +46,15 @@ class GoogleDriveDedupeStats:
 class GoogleDriveDedupeEngine:
     """Detect and optionally move duplicate files in Google Drive."""
 
-    def __init__(self, config: AppConfig, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        logger: Optional[logging.Logger] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
+    ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("file_manager")
+        self.activity_tracker = activity_tracker
         self.enabled = bool(self.config.get("cloud", "google_drive", "enabled", default=False))
         self.apply_moves = bool(self.config.get("cloud", "google_drive", "apply_moves", default=False))
         self.require_confirmation = bool(
@@ -69,6 +76,9 @@ class GoogleDriveDedupeEngine:
             "cloud", "google_drive", "duplicates_folder_id", default=None
         )
         self.logs_root = self.config.resolve_path("paths", "logs", default="logs")
+        self.progress_log_interval = int(
+            self.config.get("cloud", "google_drive", "progress_log_interval", default=50)
+        )
         self.retry_max_attempts = int(
             self.config.get("cloud", "google_drive", "retry_max_attempts", default=5)
         )
@@ -103,8 +113,17 @@ class GoogleDriveDedupeEngine:
             )
 
         target_folder_id = self.duplicates_folder_id or self._ensure_duplicates_folder(service)
-        for group in groups:
+        for index, group in enumerate(groups, start=1):
             keep, *dupes = group
+            self._touch("drive_dedupe", index, interval=25)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Drive dedupe progress: %s/%s moved=%s skipped=%s",
+                    index,
+                    len(groups),
+                    moved,
+                    skipped,
+                )
             for item in dupes:
                 if not allow_moves or not target_folder_id:
                     skipped += 1
@@ -158,6 +177,7 @@ class GoogleDriveDedupeEngine:
     def _list_files(self, service) -> list[dict]:
         files = []
         page_token = None
+        page_count = 0
         while True:
             response = self._execute_with_retry(
                 lambda: service.files().list(
@@ -170,6 +190,14 @@ class GoogleDriveDedupeEngine:
             if response is None:
                 break
             files.extend(response.get("files", []))
+            page_count += 1
+            self._touch("drive_list", page_count, interval=1)
+            if self.progress_log_interval > 0 and page_count % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Drive list progress: pages=%s files=%s",
+                    page_count,
+                    len(files),
+                )
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
@@ -278,6 +306,12 @@ class GoogleDriveDedupeEngine:
             encoding="utf-8",
         )
         return report_path
+
+    def _touch(self, note: str, count: int, interval: int = 10) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _resolve_path(self, key: str) -> Optional[Path]:
         value = self.config.get("cloud", "google_drive", key, default=None)

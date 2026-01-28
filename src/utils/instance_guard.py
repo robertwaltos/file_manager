@@ -30,6 +30,15 @@ def ensure_virtualenv() -> None:
     base_prefix = getattr(sys, "base_prefix", sys.prefix)
     real_prefix = getattr(sys, "real_prefix", None)
     in_venv = sys.prefix != base_prefix or real_prefix is not None
+    venv_root = os.environ.get("VIRTUAL_ENV")
+    if venv_root:
+        try:
+            exe = Path(sys.executable).resolve()
+            venv_path = Path(venv_root).resolve()
+            if venv_path not in exe.parents:
+                in_venv = False
+        except Exception:
+            pass
     if not in_venv:
         message = (
             "ERROR: This app must run inside the .venv interpreter.\n"
@@ -38,6 +47,30 @@ def ensure_virtualenv() -> None:
         )
         print(message, file=sys.stderr)
         raise SystemExit(2)
+
+
+def pin_venv_environment() -> None:
+    """Pin subprocesses to the current venv interpreter."""
+    exe_path = Path(sys.executable).resolve()
+    os.environ["PYTHONEXECUTABLE"] = str(exe_path)
+    venv_root = os.environ.get("VIRTUAL_ENV")
+    if not venv_root:
+        venv_root = str(exe_path.parent.parent)
+        os.environ["VIRTUAL_ENV"] = venv_root
+    venv_bin = exe_path.parent
+    current_path = os.environ.get("PATH", "")
+    if current_path:
+        parts = current_path.split(os.pathsep)
+    else:
+        parts = []
+    if not parts or os.path.normcase(parts[0]) != os.path.normcase(str(venv_bin)):
+        os.environ["PATH"] = str(venv_bin) + (os.pathsep + current_path if current_path else "")
+    try:
+        import multiprocessing
+
+        multiprocessing.set_executable(str(exe_path))
+    except Exception:
+        pass
 
 
 def _lock_file(handle: TextIO) -> None:

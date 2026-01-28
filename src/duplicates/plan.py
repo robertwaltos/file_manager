@@ -16,7 +16,7 @@ from typing import Optional
 
 from config import AppConfig, ensure_directories
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 
 @dataclass
@@ -53,12 +53,17 @@ class DuplicatePlanEngine:
         logger: Optional[logging.Logger],
         movement_logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.movement_logger = movement_logger or logging.getLogger("file_manager.movement")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("duplicates", "plan_progress_log_interval", default=1000)
+        )
         self.backup_root = self.config.resolve_path("paths", "duplicates_backup", default="data/duplicates_backup")
         self.logs_root = self.config.resolve_path("paths", "logs", default="logs")
         self.plan_prefix = str(self.config.get("duplicates", "plan_prefix", default="movement_plan"))
@@ -94,6 +99,8 @@ class DuplicatePlanEngine:
         for index, group in enumerate(groups, start=1):
             primary = group.get("primary", {})
             duplicates = group.get("duplicates", [])
+            self._touch("duplicate_plan", index, interval=100)
+            self._log_progress("duplicate_plan", index, len(groups))
             planned_duplicates = []
             for duplicate in duplicates:
                 move_index += 1
@@ -182,7 +189,7 @@ class DuplicatePlanEngine:
         moved = copied = deleted = skipped = errors = 0
         results = []
 
-        for move in moves:
+        for index, move in enumerate(moves, start=1):
             source = Path(move["source"])
             destination = Path(move["destination"])
             action = str(move.get("action", self.backup_action)).lower()
@@ -190,6 +197,8 @@ class DuplicatePlanEngine:
             delete_copy_after_backup = bool(
                 move.get("delete_copy_after_backup", delete_copy_after_backup_default)
             )
+            self._touch("duplicate_apply", index, interval=100)
+            self._log_progress("duplicate_apply", index, len(moves))
             if action in {"hardlink", "symlink"}:
                 if not source.exists():
                     skipped += 1
@@ -523,6 +532,19 @@ class DuplicatePlanEngine:
             "</body>\n"
             "</html>\n"
         )
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
+
+    def _log_progress(self, phase: str, current: int, total: int) -> None:
+        if self.progress_log_interval <= 0:
+            return
+        if current % self.progress_log_interval != 0:
+            return
+        self.logger.info("Duplicate %s progress: %s/%s", phase, current, total)
 
     def _result_entry(self, move: dict, status: str, message: str) -> dict:
         return {

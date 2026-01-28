@@ -16,7 +16,7 @@ from typing import Optional
 from config import AppConfig, ensure_directories
 from corruption.checker import IntegrityChecker
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 try:
     from PIL import Image
@@ -59,11 +59,16 @@ class CorruptionValidator:
         db_manager: DatabaseManager,
         logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("corruption", "progress_log_interval", default=5000)
+        )
         self.enabled = bool(self.config.get("corruption", "enabled", default=True))
         self.repair_enabled = bool(self.config.get("corruption", "repair_enabled", default=False))
         self.repair_output = self.config.resolve_path(
@@ -82,7 +87,7 @@ class CorruptionValidator:
         scanned = corrupted = repaired = errors = 0
         results = []
 
-        for entry in self.db_manager.iter_inventory(accessible_only=True):
+        for index, entry in enumerate(self.db_manager.iter_inventory(accessible_only=True), start=1):
             if self.max_files and scanned >= self.max_files:
                 break
             path = Path(entry.file_path)
@@ -90,6 +95,16 @@ class CorruptionValidator:
                 continue
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("corruption_validate", index, interval=500)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Corruption validation progress: %s scanned=%s corrupted=%s repaired=%s errors=%s",
+                    index,
+                    scanned,
+                    corrupted,
+                    repaired,
+                    errors,
+                )
             scanned += 1
             if self.db_manager.corruption_exists(entry.file_id):
                 continue
@@ -156,6 +171,12 @@ class CorruptionValidator:
         if suffix in {".zip"}:
             return self._repair_zip(path)
         return None, "unsupported_extension"
+
+    def _touch(self, note: str, count: int, interval: int = 500) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _repair_image(self, path: Path) -> tuple[Optional[Path], str]:
         if Image is None:

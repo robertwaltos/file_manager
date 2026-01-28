@@ -15,7 +15,7 @@ from typing import Optional
 
 from config import AppConfig, ensure_directories
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 
 IMAGE_EXTS = {
@@ -87,12 +87,17 @@ class OrganizationPlanEngine:
         logger: Optional[logging.Logger] = None,
         movement_logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.movement_logger = movement_logger or logging.getLogger("file_manager.movement")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("organization", "progress_log_interval", default=1000)
+        )
         self.enabled = bool(self.config.get("organization", "enabled", default=True))
         self.apply_enabled = bool(self.config.get("organization", "apply_plan", default=False))
         self.action = str(self.config.get("organization", "action", default="move")).lower()
@@ -155,12 +160,19 @@ class OrganizationPlanEngine:
         )
         planned: list[dict] = []
         inbox_counts: dict[str, int] = {}
-        for entry in self.db_manager.list_classifications():
+        for index, entry in enumerate(self.db_manager.list_classifications(), start=1):
             source = Path(entry["file_path"])
             if not source.exists():
                 continue
             if self._is_quarantine_path(source):
                 continue
+            self._touch("organization_plan", index, interval=200)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Organization plan progress: %s planned=%s",
+                    index,
+                    len(planned),
+                )
             destination = self._resolve_destination(source, entry)
             if destination is None:
                 continue
@@ -228,7 +240,7 @@ class OrganizationPlanEngine:
         moved = copied = skipped = errors = 0
         results = []
 
-        for move in moves:
+        for index, move in enumerate(moves, start=1):
             source = Path(move["source"])
             destination = Path(move["destination"])
             action = str(move.get("action", self.action)).lower()
@@ -240,6 +252,17 @@ class OrganizationPlanEngine:
             destination.parent.mkdir(parents=True, exist_ok=True)
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("organization_apply", index, interval=200)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Organization apply progress: %s/%s moved=%s copied=%s skipped=%s errors=%s",
+                    index,
+                    len(moves),
+                    moved,
+                    copied,
+                    skipped,
+                    errors,
+                )
 
             try:
                 source_size = source.stat().st_size
@@ -312,6 +335,12 @@ class OrganizationPlanEngine:
             skipped=skipped,
             errors=errors,
         )
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _build_destination(self, source: Path, entry: dict) -> Optional[Path]:
         ext = source.suffix.lower()

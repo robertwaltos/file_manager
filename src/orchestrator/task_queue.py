@@ -12,6 +12,7 @@ from typing import Callable, Iterable, Optional
 
 from config import AppConfig
 from database import DatabaseManager
+from utils import ActivityTracker
 
 
 TaskAction = Callable[[dict], None]
@@ -35,10 +36,12 @@ class TaskQueue:
         db_manager: DatabaseManager,
         logger: Optional[logging.Logger] = None,
         config: Optional[AppConfig] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.config = config
+        self.activity_tracker = activity_tracker
         self.tasks: list[Task] = []
 
     def register(self, tasks: Iterable[Task]) -> None:
@@ -84,12 +87,18 @@ class TaskQueue:
                 try:
                     self.db_manager.update_task_status(task.task_id, "in_progress")
                     self.logger.info("Starting task: %s", task.name)
+                    if self.activity_tracker is not None:
+                        self.activity_tracker.touch(f"task:{task.task_id}")
                     task.action(context)
                     self.db_manager.update_task_status(task.task_id, "completed")
                     self.logger.info("Task completed: %s", task.name)
+                    if self.activity_tracker is not None:
+                        self.activity_tracker.touch(f"task_done:{task.task_id}")
                     break
                 except Exception as exc:
                     self.db_manager.update_task_status(task.task_id, "failed", last_error=str(exc))
+                    if self.activity_tracker is not None:
+                        self.activity_tracker.touch(f"task_error:{task.task_id}")
                     if self._should_retry(exc):
                         attempts = self.db_manager.get_task_attempts(task.task_id)
                         if max_attempts and attempts >= max_attempts:

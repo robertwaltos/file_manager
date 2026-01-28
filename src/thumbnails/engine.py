@@ -16,7 +16,7 @@ from typing import Optional
 
 from config import AppConfig, ensure_directories
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 try:
     from PIL import Image
@@ -58,12 +58,14 @@ class ThumbnailCleanupEngine:
         logger: Optional[logging.Logger],
         movement_logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.movement_logger = movement_logger or logging.getLogger("file_manager.movement")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
 
         self.enabled = bool(self.config.get("thumbnails", "enabled", default=True))
         self.apply_cleanup = bool(self.config.get("thumbnails", "apply_cleanup", default=False))
@@ -76,6 +78,9 @@ class ThumbnailCleanupEngine:
         self.action = str(self.config.get("thumbnails", "action", default="move")).lower()
         self.quarantine_root = self.config.resolve_path(
             "thumbnails", "quarantine_path", default="F:/Thumbnails_to_delete"
+        )
+        self.progress_log_interval = int(
+            self.config.get("thumbnails", "progress_log_interval", default=10000)
         )
         self.max_size_bytes = int(
             self.config.get("thumbnails", "max_size_bytes", default=1_048_576)
@@ -204,14 +209,29 @@ class ThumbnailCleanupEngine:
         ensure_directories([self.logs_root])
         candidates = []
         skipped_missing = 0
+        total_inventory = None
+        try:
+            total_inventory = self.db_manager.count_inventory(accessible_only=True)
+        except Exception:
+            total_inventory = None
 
-        for entry in self.db_manager.iter_inventory(accessible_only=True):
+        for index, entry in enumerate(self.db_manager.iter_inventory(accessible_only=True), start=1):
             path = Path(entry.file_path)
             if not path.exists():
                 skipped_missing += 1
                 continue
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("thumbnails_report", index, interval=500)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                total_label = total_inventory if total_inventory is not None else "?"
+                self.logger.info(
+                    "Thumbnail scan progress: %s/%s candidates=%s skipped_missing=%s",
+                    index,
+                    total_label,
+                    len(candidates),
+                    skipped_missing,
+                )
             candidate = self._evaluate_candidate(path, entry.size, entry.file_id)
             if candidate is not None:
                 candidates.append(candidate)
@@ -239,11 +259,12 @@ class ThumbnailCleanupEngine:
         candidates = report_data.get("candidates", [])
         moved = deleted = skipped = errors = 0
         results = []
+        total_candidates = len(candidates)
         operation_id = f"thumbnail_cleanup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         if self.action == "move":
             ensure_directories([self.quarantine_root, self.logs_root])
 
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates, start=1):
             file_path = Path(candidate.get("file_path", ""))
             if not file_path.exists():
                 skipped += 1
@@ -255,6 +276,17 @@ class ThumbnailCleanupEngine:
                 continue
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("thumbnails_apply", index, interval=200)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Thumbnail cleanup progress: %s/%s moved=%s deleted=%s skipped=%s errors=%s",
+                    index,
+                    total_candidates,
+                    moved,
+                    deleted,
+                    skipped,
+                    errors,
+                )
             try:
                 if self.action == "move":
                     destination = self._build_destination(file_path, candidate.get("file_id", ""))
@@ -469,6 +501,12 @@ class ThumbnailCleanupEngine:
             "status": status,
             "message": message,
         }
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)
 
     def _build_destination(self, source_path: Path, file_id: str | int) -> Path:
         encoded_parent = self._encode_path(str(source_path.parent))

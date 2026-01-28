@@ -97,12 +97,21 @@ class Orchestrator:
             logger=self.logger,
             movement_logger=self.movement_logger,
             monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.corruption_validator = CorruptionValidator(
-            config, self.db_manager, logger=self.logger, monitor=self.resource_monitor
+            config,
+            self.db_manager,
+            logger=self.logger,
+            monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.ai_engine = AiCategorizationEngine(
-            config, self.db_manager, logger=self.logger, monitor=self.resource_monitor
+            config,
+            self.db_manager,
+            logger=self.logger,
+            monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.nsfw_mover = NsfwMover(
             config,
@@ -110,6 +119,7 @@ class Orchestrator:
             logger=self.logger,
             movement_logger=self.movement_logger,
             monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.organization_engine = OrganizationPlanEngine(
             config,
@@ -117,9 +127,14 @@ class Orchestrator:
             logger=self.logger,
             movement_logger=self.movement_logger,
             monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
-        self.drive_dedupe_engine = GoogleDriveDedupeEngine(config, logger=self.logger)
-        self.drive_upload_engine = GoogleDriveUploadEngine(config, logger=self.logger)
+        self.drive_dedupe_engine = GoogleDriveDedupeEngine(
+            config, logger=self.logger, activity_tracker=self.activity_tracker
+        )
+        self.drive_upload_engine = GoogleDriveUploadEngine(
+            config, logger=self.logger, activity_tracker=self.activity_tracker
+        )
         self.latest_organization_plan: Optional[Path] = None
         self.thumbnail_engine = ThumbnailCleanupEngine(
             config,
@@ -127,9 +142,14 @@ class Orchestrator:
             logger=self.logger,
             movement_logger=self.movement_logger,
             monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.duplicate_engine = DuplicateEngine(
-            config, self.db_manager, self.logger, monitor=self.resource_monitor
+            config,
+            self.db_manager,
+            self.logger,
+            monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.duplicate_plan_engine = DuplicatePlanEngine(
             config,
@@ -137,11 +157,17 @@ class Orchestrator:
             logger=self.logger,
             movement_logger=self.movement_logger,
             monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.rollback_manager = RollbackManager(
             self.db_manager, logger=self.logger, monitor=self.resource_monitor
         )
-        self.task_queue = TaskQueue(self.db_manager, logger=self.logger, config=self.config)
+        self.task_queue = TaskQueue(
+            self.db_manager,
+            logger=self.logger,
+            config=self.config,
+            activity_tracker=self.activity_tracker,
+        )
         self.checkpoint_interval = int(
             self.config.get("safety", "checkpoint_interval_seconds", default=300)
         )

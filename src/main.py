@@ -12,7 +12,12 @@ from datetime import datetime
 from pathlib import Path
 
 from orchestrator.main import main
-from utils.instance_guard import InstanceLockError, acquire_instance_lock, ensure_virtualenv
+from utils.instance_guard import (
+    InstanceLockError,
+    acquire_instance_lock,
+    ensure_virtualenv,
+    pin_venv_environment,
+)
 
 
 def _enable_crash_diagnostics() -> None:
@@ -37,6 +42,7 @@ def _enable_crash_diagnostics() -> None:
 
 if __name__ == "__main__":
     ensure_virtualenv()
+    pin_venv_environment()
     _enable_crash_diagnostics()
     if os.environ.get("FILE_MANAGER_ALLOW_MULTI_INSTANCE") != "1":
         try:

@@ -16,6 +16,15 @@ if (-not (Test-Path $python)) {
     exit 1
 }
 
+$venvBin = Split-Path -Parent $python
+$env:PYTHONEXECUTABLE = $python
+if (-not $env:VIRTUAL_ENV) {
+    $env:VIRTUAL_ENV = Split-Path -Parent $venvBin
+}
+if (-not $env:PATH.StartsWith($venvBin, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $env:PATH = $venvBin + [System.IO.Path]::PathSeparator + $env:PATH
+}
+
 if ($Config) {
     $env:FILE_MANAGER_CONFIG = $Config
 }

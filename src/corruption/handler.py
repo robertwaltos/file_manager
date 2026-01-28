@@ -14,7 +14,7 @@ from typing import Optional
 
 from config import AppConfig, ensure_directories
 from database import DatabaseManager
-from utils import ResourceMonitor
+from utils import ActivityTracker, ResourceMonitor
 
 
 @dataclass
@@ -37,12 +37,17 @@ class CorruptionMover:
         logger: Optional[logging.Logger] = None,
         movement_logger: Optional[logging.Logger] = None,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[ActivityTracker] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger or logging.getLogger("file_manager")
         self.movement_logger = movement_logger or logging.getLogger("file_manager.movement")
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
+        self.progress_log_interval = int(
+            self.config.get("corruption", "quarantine_progress_log_interval", default=1000)
+        )
         self.corrupted_root = self.config.resolve_path("paths", "corrupted", default="data/corrupted_files")
         self.logs_root = self.config.resolve_path("paths", "logs", default="logs")
 
@@ -57,7 +62,7 @@ class CorruptionMover:
         moved = skipped = errors = 0
         results = []
 
-        for entry in candidates:
+        for index, entry in enumerate(candidates, start=1):
             if not entry["accessible"]:
                 skipped += 1
                 results.append(self._result(entry, "skipped", "not_accessible"))
@@ -74,6 +79,15 @@ class CorruptionMover:
 
             if self.monitor is not None:
                 self.monitor.throttle()
+            self._touch("corruption_quarantine", index, interval=200)
+            if self.progress_log_interval > 0 and index % self.progress_log_interval == 0:
+                self.logger.info(
+                    "Corruption quarantine progress: %s moved=%s skipped=%s errors=%s",
+                    index,
+                    moved,
+                    skipped,
+                    errors,
+                )
 
             destination = self._build_destination(source_path, entry["file_id"])
             destination = self._resolve_conflict(destination)
@@ -196,3 +210,9 @@ class CorruptionMover:
             "status": status,
             "message": message,
         }
+
+    def _touch(self, note: str, count: int, interval: int = 200) -> None:
+        if self.activity_tracker is None:
+            return
+        if count % interval == 0:
+            self.activity_tracker.touch(note)

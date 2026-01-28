@@ -93,6 +93,7 @@ ai:
   reprocess_existing: false
   max_files_per_run: 0
   text_max_chars: 4000
+  progress_log_interval: 2000
   clip_model: "openai/clip-vit-base-patch32"
   image_batch_size: 8
   use_embeddings: true
@@ -164,6 +165,7 @@ nsfw:
   enabled: true
   move_flagged: true
   threshold: 0.85
+  progress_log_interval: 200
   report_prefix: "nsfw_report"
   review_prefix: "nsfw_review"
   thumbnail_max_px: 256
@@ -174,6 +176,7 @@ organization:
   enabled: true
   apply_plan: false
   action: "move"
+  progress_log_interval: 1000
   plan_prefix: "organization_plan"
   review_prefix: "organization_review"
   use_year_subdir: false
@@ -226,6 +229,7 @@ cloud:
     service_account_path: "E:/google cloud acess key for robert_waltos_net.json"
     duplicates_folder_name: "DRIVE DUPLICATES FROM OTHER FOLDERS"
     duplicates_folder_id: ""
+    progress_log_interval: 50
     scopes:
       - "https://www.googleapis.com/auth/drive"
     upload_enabled: false
@@ -234,6 +238,7 @@ cloud:
     upload_delete_after: false
     upload_skip_existing: true
     upload_chunk_mb: 8
+    upload_progress_log_interval: 100
     upload_root_id: "root"
     local_root: "G:/My Drive"
     retry_max_attempts: 5
@@ -245,6 +250,8 @@ corruption:
   repair_enabled: false
   repair_output: "F:/__CORRUPTED_FILES/repairs"
   max_files_per_run: 0
+  progress_log_interval: 5000
+  quarantine_progress_log_interval: 1000
 
 safety:
   require_approval_for_deletion: true
@@ -261,14 +268,15 @@ safety:
   phase_approval_tasks: []
   phase_approvals: {}
   activity_min_interval_seconds: 2
-  stall_warning_seconds: 600
-  stall_abort_seconds: 1800
+  stall_warning_seconds: 240
+  stall_abort_seconds: 300
   stall_check_interval_seconds: 30
 
 hashing:
   full_hash_max_bytes: 104857600
   hybrid_chunk_bytes: 1048576
   hash_exists_batch_size: 1000
+  progress_log_interval: 10000
   integrity_checks_enabled: true
   integrity_skip_extensions:
     - ".pdf"
@@ -291,6 +299,8 @@ duplicates:
     - "Music"
   google_drive_marker: "G:\\My Drive"
   google_drive_target: "G:\\My Drive\\DRIVE DUPLICATES FROM OTHER FOLDERS"
+  progress_log_interval: 1000
+  plan_progress_log_interval: 1000
 
 thumbnails:
   enabled: true
@@ -299,6 +309,7 @@ thumbnails:
   result_prefix: "thumbnail_cleanup"
   action: "move"
   quarantine_path: "F:/Thumbnails_to_delete"
+  progress_log_interval: 10000
   max_size_bytes: 1048576
   max_dimension_px: 512
   image_extensions:
