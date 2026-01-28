@@ -66,6 +66,13 @@ class HashingEngine:
         self.hash_exists_batch_size = int(
             self.config.get("hashing", "hash_exists_batch_size", default=1000)
         )
+        self.integrity_checks_enabled = bool(
+            self.config.get("hashing", "integrity_checks_enabled", default=True)
+        )
+        self.integrity_skip_exts = {
+            ext.lower()
+            for ext in self.config.get("hashing", "integrity_skip_extensions", default=[])
+        }
         self.hasher = Hasher(
             full_hash_max_bytes=int(
                 self.config.get("hashing", "full_hash_max_bytes", default=100 * 1024 * 1024)
@@ -259,7 +266,9 @@ class HashingEngine:
         except (OSError, IOError) as exc:
             return HashJobResult(entry, None, None, None, "read_error", str(exc))
 
-        corruption = self.integrity_checker.check(file_path)
+        corruption = None
+        if self.integrity_checks_enabled and file_path.suffix.lower() not in self.integrity_skip_exts:
+            corruption = self.integrity_checker.check(file_path)
         return HashJobResult(entry, hash_type, hash_value, corruption, None, None)
 
     def _drain_futures(self, pending: list, limit: int) -> Iterable[HashJobResult]:

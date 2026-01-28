@@ -268,6 +268,9 @@ hashing:
   full_hash_max_bytes: 104857600
   hybrid_chunk_bytes: 1048576
   hash_exists_batch_size: 1000
+  integrity_checks_enabled: true
+  integrity_skip_extensions:
+    - ".pdf"
 
 duplicates:
   report_prefix: "duplicate_report"

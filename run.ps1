@@ -1,6 +1,6 @@
 Param(
     [string]$Config = "",
-    [int]$MaxRestarts = 3,
+    [int]$MaxRestarts = 0,
     [int]$RestartDelaySeconds = 30
 )
 
@@ -24,6 +24,12 @@ $autoRestart = $env:FILE_MANAGER_AUTO_RESTART
 if ([string]::IsNullOrWhiteSpace($autoRestart)) {
     $autoRestart = "1"
 }
+if ($env:FILE_MANAGER_MAX_RESTARTS) {
+    $MaxRestarts = [int]$env:FILE_MANAGER_MAX_RESTARTS
+}
+if ($env:FILE_MANAGER_RESTART_DELAY_SECONDS) {
+    $RestartDelaySeconds = [int]$env:FILE_MANAGER_RESTART_DELAY_SECONDS
+}
 
 if (-not $env:FILE_MANAGER_DISABLE_TAIL) {
     $tailScript = Join-Path $root "tail_performance.ps1"
@@ -46,7 +52,7 @@ do {
     if ($exitCode -eq 0 -or $autoRestart -eq "0") {
         exit $exitCode
     }
-    if ($attempt -ge $MaxRestarts) {
+    if ($MaxRestarts -gt 0 -and $attempt -ge $MaxRestarts) {
         Write-Error "Max restarts reached ($MaxRestarts). Exiting with code $exitCode."
         exit $exitCode
     }
