@@ -572,6 +572,15 @@ class DatabaseManager:
         ).fetchone()
         return str(row[0]) if row else None
 
+    def get_task_attempts(self, task_id: str) -> int:
+        """Fetch the attempt count for a task."""
+        self.connect()
+        row = self._state_conn.execute(
+            "SELECT attempts FROM task_queue WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
     def list_tasks(self) -> list[dict]:
         """Return all queued tasks."""
         self.connect()

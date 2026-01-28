@@ -28,7 +28,7 @@ from organization import OrganizationPlanEngine
 from orchestrator.task_queue import Task, TaskQueue
 from thumbnails import ThumbnailCleanupEngine
 from tools.merge_folders import run_merge_job
-from utils import ProgressReporter, ResourceMonitor, setup_logging
+from utils import ActivityTracker, ProgressReporter, ResourceMonitor, StallMonitor, setup_logging
 
 
 class Orchestrator:
@@ -41,6 +41,7 @@ class Orchestrator:
         self.loggers = setup_logging(self.config.resolve_path("paths", "logs", default="logs"))
         self.logger = self.loggers["main"]
         self.movement_logger = self.loggers["movement"]
+        self.logger.info("Python executable: %s", os.environ.get("PYTHONEXECUTABLE", "") or os.sys.executable)
         self.resource_monitor = ResourceMonitor(
             max_cpu_percent=float(self.config.get("resource_limits", "max_cpu_percent", default=33)),
             max_ram_percent=float(self.config.get("resource_limits", "max_ram_percent", default=33)),
@@ -49,6 +50,24 @@ class Orchestrator:
             ),
             min_check_interval_seconds=float(
                 self.config.get("resource_limits", "min_check_interval_seconds", default=0.5)
+            ),
+        )
+        self.activity_tracker = ActivityTracker(
+            min_interval_seconds=float(
+                self.config.get("safety", "activity_min_interval_seconds", default=2.0)
+            )
+        )
+        self.stall_monitor = StallMonitor(
+            tracker=self.activity_tracker,
+            logger=self.logger,
+            warning_seconds=float(
+                self.config.get("safety", "stall_warning_seconds", default=600)
+            ),
+            abort_seconds=float(
+                self.config.get("safety", "stall_abort_seconds", default=0)
+            ),
+            check_interval_seconds=float(
+                self.config.get("safety", "stall_check_interval_seconds", default=30)
             ),
         )
         self.progress_reporter = ProgressReporter(
@@ -66,7 +85,11 @@ class Orchestrator:
         )
         self.scanner = Scanner(config, self.db_manager)
         self.hashing_engine = HashingEngine(
-            config, self.db_manager, self.logger, monitor=self.resource_monitor
+            config,
+            self.db_manager,
+            self.logger,
+            monitor=self.resource_monitor,
+            activity_tracker=self.activity_tracker,
         )
         self.corruption_mover = CorruptionMover(
             config,
@@ -132,6 +155,8 @@ class Orchestrator:
             self._log_optional_dependency_warnings()
             self._enforce_resume_confirmation()
             self._maybe_run_rollback()
+            self.activity_tracker.touch("startup")
+            self.stall_monitor.start()
             self.progress_reporter.start()
             if self.web_dashboard_enabled:
                 self.dashboard_server.start()
@@ -144,6 +169,7 @@ class Orchestrator:
             if self.web_dashboard_enabled:
                 self.dashboard_server.stop()
             self.progress_reporter.stop()
+            self.stall_monitor.stop()
             self.db_manager.close()
 
     def _build_tasks(self) -> list[Task]:
@@ -398,6 +424,7 @@ class Orchestrator:
                         self.db_manager.resolve_permission_issue(record.file_path)
                     processed_files += 1
                     last_file_path = record.file_path
+                    self.activity_tracker.touch("scan")
                     if self._should_checkpoint(processed_files, last_checkpoint_time):
                         self.db_manager.save_checkpoint(
                             operation_id=operation_id,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
@@ -52,32 +53,56 @@ class TaskQueue:
             context = {}
         self.db_manager.reset_in_progress_tasks()
         for task in self.tasks:
-            status = self.db_manager.get_task_status(task.task_id)
-            if status == "completed":
-                self.logger.info("Task already completed: %s", task.name)
-                continue
-            if not self._dependencies_completed(task):
-                self.logger.info("Task blocked by dependencies: %s", task.name)
-                continue
-            if self._requires_approval(task) and not self._is_approved(task):
-                env_key = f"FILE_MANAGER_APPROVE_{task.task_id.upper()}"
-                self.logger.warning(
-                    "Task awaiting approval: %s. Set %s=1 or safety.phase_approvals.%s: true",
-                    task.name,
-                    env_key,
-                    task.task_id,
-                )
-                continue
-            try:
-                self.db_manager.update_task_status(task.task_id, "in_progress")
-                self.logger.info("Starting task: %s", task.name)
-                task.action(context)
-                self.db_manager.update_task_status(task.task_id, "completed")
-                self.logger.info("Task completed: %s", task.name)
-            except Exception as exc:
-                self.db_manager.update_task_status(task.task_id, "failed", last_error=str(exc))
-                self.logger.exception("Task failed: %s", task.name)
-                raise
+            while True:
+                status = self.db_manager.get_task_status(task.task_id)
+                if status == "completed":
+                    self.logger.info("Task already completed: %s", task.name)
+                    break
+                if not self._dependencies_completed(task):
+                    self.logger.info("Task blocked by dependencies: %s", task.name)
+                    break
+                if self._requires_approval(task) and not self._is_approved(task):
+                    env_key = f"FILE_MANAGER_APPROVE_{task.task_id.upper()}"
+                    self.logger.warning(
+                        "Task awaiting approval: %s. Set %s=1 or safety.phase_approvals.%s: true",
+                        task.name,
+                        env_key,
+                        task.task_id,
+                    )
+                    break
+                max_attempts = self._max_attempts()
+                attempts = self.db_manager.get_task_attempts(task.task_id)
+                if max_attempts and attempts >= max_attempts:
+                    self.logger.error(
+                        "Task exceeded max attempts (%s): %s", max_attempts, task.name
+                    )
+                    raise RuntimeError(f"Task exceeded max attempts: {task.name}")
+                try:
+                    self.db_manager.update_task_status(task.task_id, "in_progress")
+                    self.logger.info("Starting task: %s", task.name)
+                    task.action(context)
+                    self.db_manager.update_task_status(task.task_id, "completed")
+                    self.logger.info("Task completed: %s", task.name)
+                    break
+                except Exception as exc:
+                    self.db_manager.update_task_status(task.task_id, "failed", last_error=str(exc))
+                    if self._should_retry(exc):
+                        attempts = self.db_manager.get_task_attempts(task.task_id)
+                        if max_attempts and attempts >= max_attempts:
+                            self.logger.exception("Task failed: %s", task.name)
+                            raise
+                        delay = self._retry_delay_seconds(attempts)
+                        self.logger.warning(
+                            "Task failed: %s. Retrying in %.1fs (%s/%s)",
+                            task.name,
+                            delay,
+                            attempts,
+                            max_attempts if max_attempts else "∞",
+                        )
+                        time.sleep(delay)
+                        continue
+                    self.logger.exception("Task failed: %s", task.name)
+                    raise
 
     def _dependencies_completed(self, task: Task) -> bool:
         if not task.depends_on:
@@ -87,6 +112,28 @@ class TaskQueue:
             if status != "completed":
                 return False
         return True
+
+    def _max_attempts(self) -> int:
+        if self.config is None:
+            return 1
+        return int(self.config.get("task_queue", "max_attempts", default=1))
+
+    def _retry_delay_seconds(self, attempt: int) -> float:
+        if self.config is None:
+            return 0.0
+        base = float(self.config.get("task_queue", "retry_delay_seconds", default=30))
+        backoff = float(self.config.get("task_queue", "retry_backoff", default=2))
+        if base <= 0:
+            return 0.0
+        return base * (backoff ** max(attempt - 1, 0))
+
+    def _should_retry(self, exc: Exception) -> bool:
+        if self.config is None:
+            return False
+        enabled = bool(self.config.get("task_queue", "retry_enabled", default=False))
+        if not enabled:
+            return False
+        return isinstance(exc, (OSError, IOError, PermissionError, TimeoutError))
 
     def _requires_approval(self, task: Task) -> bool:
         if self.config is None:

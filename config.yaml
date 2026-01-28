@@ -76,6 +76,10 @@ dashboard:
 
 task_queue:
   reset_on_start: true
+  max_attempts: 3
+  retry_enabled: true
+  retry_delay_seconds: 30
+  retry_backoff: 2
 
 ai_models:
   clip_model: "ViT-L/14"
@@ -254,6 +258,10 @@ safety:
   require_phase_approval: true
   phase_approval_tasks: []
   phase_approvals: {}
+  activity_min_interval_seconds: 2
+  stall_warning_seconds: 600
+  stall_abort_seconds: 0
+  stall_check_interval_seconds: 30
 
 hashing:
   full_hash_max_bytes: 104857600

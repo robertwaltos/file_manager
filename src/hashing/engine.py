@@ -51,11 +51,13 @@ class HashingEngine:
         db_manager: DatabaseManager,
         logger: logging.Logger,
         monitor: Optional[ResourceMonitor] = None,
+        activity_tracker: Optional[object] = None,
     ) -> None:
         self.config = config
         self.db_manager = db_manager
         self.logger = logger
         self.monitor = monitor
+        self.activity_tracker = activity_tracker
         self.checkpoint_interval = int(
             self.config.get("safety", "checkpoint_interval_seconds", default=300)
         )
@@ -305,6 +307,8 @@ class HashingEngine:
             operation_id, processed_files, total_files, last_file_path, last_checkpoint_time
         ):
             last_checkpoint_time = time.monotonic()
+        if self.activity_tracker is not None:
+            self.activity_tracker.touch("hashing")
         return (
             processed_files,
             hashed_files,
