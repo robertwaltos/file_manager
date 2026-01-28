@@ -630,6 +630,14 @@ class DatabaseManager:
         )
         self._state_conn.commit()
 
+    def reset_task_attempts(self) -> None:
+        """Reset task attempt counters."""
+        self.connect()
+        self._state_conn.execute(
+            "UPDATE task_queue SET attempts = 0"
+        )
+        self._state_conn.commit()
+
     def record_file_operation(
         self,
         operation_id: str,

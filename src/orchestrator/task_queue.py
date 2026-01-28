@@ -52,6 +52,10 @@ class TaskQueue:
         if context is None:
             context = {}
         self.db_manager.reset_in_progress_tasks()
+        if self.config is not None and bool(
+            self.config.get("task_queue", "reset_attempts_on_start", default=False)
+        ):
+            self.db_manager.reset_task_attempts()
         for task in self.tasks:
             while True:
                 status = self.db_manager.get_task_status(task.task_id)

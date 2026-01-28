@@ -76,6 +76,7 @@ dashboard:
 
 task_queue:
   reset_on_start: true
+  reset_attempts_on_start: true
   max_attempts: 3
   retry_enabled: true
   retry_delay_seconds: 30
