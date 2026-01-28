@@ -260,7 +260,7 @@ safety:
   phase_approvals: {}
   activity_min_interval_seconds: 2
   stall_warning_seconds: 600
-  stall_abort_seconds: 0
+  stall_abort_seconds: 1800
   stall_check_interval_seconds: 30
 
 hashing:
