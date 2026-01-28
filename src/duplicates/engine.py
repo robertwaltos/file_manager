@@ -296,9 +296,14 @@ class DuplicateEngine:
         return primary, ", ".join(reasons) if reasons else "default_priority"
 
     def _parse_modification_time(self, value: str) -> float:
+        if not value:
+            return 0.0
         try:
-            return datetime.fromisoformat(value).timestamp()
-        except (TypeError, ValueError):
+            cleaned = str(value).strip()
+            if cleaned.endswith("Z"):
+                cleaned = cleaned[:-1] + "+00:00"
+            return datetime.fromisoformat(cleaned).timestamp()
+        except Exception:
             return 0.0
 
     def _touch(self, note: str, count: int, interval: int = 200) -> None:
